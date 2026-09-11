@@ -1,0 +1,6 @@
+{
+  "passed": false,
+  "issues": [
+    "No empty-state message is shown when the task list is empty."
+  ]
+}

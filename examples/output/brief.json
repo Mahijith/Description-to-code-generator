@@ -1,0 +1,9 @@
+{
+  "goal": "Prototype the application described in the transcript.",
+  "scope": "A single primary entity with create/edit/delete/complete/filter.",
+  "out_of_scope": "Authentication, multi-user sync, backend persistence.",
+  "success_criteria": [
+    "Every entity field from the transcript is editable in the UI",
+    "Every action mentioned (add/edit/delete/complete/filter) works"
+  ]
+}

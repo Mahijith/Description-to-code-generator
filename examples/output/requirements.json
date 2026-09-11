@@ -1,0 +1,57 @@
+{
+  "app_name": "Task Tracker",
+  "description": "Track personal tasks with due dates and priority.",
+  "entities": [
+    {
+      "name": "Task",
+      "fields": [
+        {
+          "name": "title",
+          "type": "text",
+          "options": []
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "options": []
+        },
+        {
+          "name": "due_date",
+          "type": "date",
+          "options": []
+        },
+        {
+          "name": "priority",
+          "type": "select",
+          "options": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        },
+        {
+          "name": "completed",
+          "type": "boolean",
+          "options": []
+        }
+      ]
+    }
+  ],
+  "actions": [
+    "add",
+    "edit",
+    "delete",
+    "complete",
+    "filter"
+  ],
+  "filters": [
+    "priority",
+    "completed"
+  ],
+  "screens": [
+    {
+      "name": "Task List",
+      "purpose": "View, add, edit and filter tasks"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "tech_approach": "Single self-contained HTML file, vanilla JS, localStorage persistence.",
+  "data_model_notes": "One array of task objects keyed by a generated id, stored under one localStorage key.",
+  "screen_breakdown": [
+    "Task List (form + filterable table)"
+  ],
+  "style_notes": "Clean, minimal, readable at 400px width."
+}

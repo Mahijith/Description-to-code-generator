@@ -1,0 +1,8 @@
+So the app I want is basically a personal task tracker. Each task needs a
+title, a longer description, a due date, and a priority — low, medium, or
+high. Users should be able to add a new task, edit an existing one, and
+delete tasks they don't need anymore. There should be a way to mark a task
+as complete, maybe just a button next to it. And I want to be able to
+filter the list — by priority, and also filter to just see the completed
+or incomplete ones. Keep it simple, just one screen with the list and a
+form to add new tasks.
