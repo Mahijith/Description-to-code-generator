@@ -22,7 +22,7 @@ from pipeline.secrets import Secrets, mask_key
 # the actual prototype HTML/CSS/JS). Free-tier model on OpenRouter — swap
 # this one constant to change it; every agent shares it, there's no
 # per-agent override.
-DEFAULT_MODEL = "thinkingmachines/inkling:free"
+DEFAULT_MODEL = "google/gemma-4-31b-it:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 

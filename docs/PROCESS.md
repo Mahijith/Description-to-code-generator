@@ -65,10 +65,11 @@ taste:
    OpenRouter turned out to route through Nvidia's own backend, which hit
    a transient "service temporarily overloaded" 502 in practice (exposed a
    real bug in error handling along the way — see the round-five note
-   below). The deployer then switched `DEFAULT_MODEL` again, to
-   `thinkingmachines/inkling:free` — another model id I couldn't verify
-   from this sandbox (`openrouter.ai` stayed blocked throughout this
-   project), so again taken as given.
+   below). The deployer then switched `DEFAULT_MODEL` twice more, to
+   `thinkingmachines/inkling:free` and then `google/gemma-4-31b-it:free` —
+   neither of which I could verify from this sandbox (`openrouter.ai`
+   stayed blocked throughout this project), so both were taken as given
+   rather than checked.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
    transcribe a recording. I first moved transcription to `faster-whisper`

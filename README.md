@@ -51,7 +51,7 @@ Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. The default implementation is **`OpenRouterProvider`**,
 which talks to [OpenRouter](https://openrouter.ai)'s free-tier models
-(default: `thinkingmachines/inkling:free`, picked for coding ability —
+(default: `google/gemma-4-31b-it:free`, picked for coding ability —
 the Developer agent is writing actual HTML/CSS/JS). **No Claude
 is used anywhere in this app** — that was a deliberate choice to run on
 free models. Because OpenRouter is one gateway, **a single API key powers
