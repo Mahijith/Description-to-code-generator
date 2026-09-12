@@ -16,6 +16,19 @@ from pipeline.transcribe import PassthroughTranscriber, TranscriptionError, make
 
 st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
 
+
+def _friendly_llm_error(exc: LLMError) -> str:
+    msg = str(exc)
+    if "401" in msg:
+        return "That API key was rejected. Double-check it at openrouter.ai/keys."
+    if "429" in msg:
+        return "Rate-limited by OpenRouter. Wait a bit and try again, or switch models."
+    if "not valid JSON" in msg:
+        return "The model didn't reply in the expected format. Try again, or use a different model id."
+    if "Request to OpenRouter failed" in msg:
+        return "Couldn't reach OpenRouter — check your network connection."
+    return msg
+
 # ---------------------------------------------------------------------------
 # Almost all styling (colors, fonts, borders, radii) lives in
 # .streamlit/config.toml, which is the native, theme-switcher-preserving way
@@ -48,18 +61,18 @@ STAGE_NODES = [
 st.markdown(
     f"""
 <style>
-.badge-row {{ display:flex; gap:8px; flex-wrap:wrap; margin: 0.4rem 0 1rem 0; }}
+.badge-row {{ display:flex; gap:6px; flex-wrap:wrap; margin: 0.2rem 0 0.6rem 0; }}
 .badge {{ background:{C['card']}; border:1px solid {C['border']}; color:{C['accent_soft']};
-          border-radius:999px; padding:3px 12px; font-size:0.78rem; font-family:monospace; }}
-.step-track {{ display:flex; justify-content:space-between; position:relative; margin: 1.2rem 0 1.6rem 0; }}
-.step-track::before {{ content:''; position:absolute; top:18px; left:6%; right:6%; height:2px;
+          border-radius:999px; padding:1px 10px; font-size:0.7rem; font-family:monospace; }}
+.step-track {{ display:flex; justify-content:space-between; position:relative; margin: 0.6rem 0 0.7rem 0; }}
+.step-track::before {{ content:''; position:absolute; top:14px; left:6%; right:6%; height:2px;
           background:{C['border']}; z-index:0; }}
 .step {{ position:relative; z-index:1; display:flex; flex-direction:column; align-items:center;
-          gap:6px; flex:1; }}
-.step-icon {{ width:36px; height:36px; border-radius:50%; display:flex; align-items:center;
+          gap:3px; flex:1; }}
+.step-icon {{ width:28px; height:28px; border-radius:50%; display:flex; align-items:center;
           justify-content:center; background:{C['card']}; border:2px solid {C['border']};
-          color:{C['muted']}; font-size:1rem; }}
-.step-label {{ font-size:0.78rem; color:{C['muted']}; text-align:center; }}
+          color:{C['muted']}; font-size:0.85rem; }}
+.step-label {{ font-size:0.68rem; color:{C['muted']}; text-align:center; }}
 .step-done .step-icon {{ background:{C['accent']}; border-color:{C['accent']}; color:white; }}
 .step-done .step-label {{ color:inherit; }}
 .step-running .step-icon {{ border-color:{C['accent']}; color:{C['accent']};
@@ -75,8 +88,8 @@ st.markdown(
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.image("assets/logo.png", width=56)
-    st.header("Model")
+    st.image("assets/logo.png", width=36)
+    st.subheader("Model")
     demo_mode = st.toggle(
         "Demo mode (no API key)",
         value=True,
@@ -95,6 +108,32 @@ with st.sidebar:
             value=DEFAULT_MODEL,
             help="Any OpenRouter model id. Check openrouter.ai/models for what's currently free.",
         )
+        # Changing the key or model invalidates any earlier "known good" test.
+        if st.session_state.get("tested_key") != (api_key, model_id):
+            st.session_state.pop("connection_ok", None)
+            st.session_state.pop("connection_error", None)
+
+        test_col, status_col = st.columns([1, 2], vertical_alignment="center")
+        with test_col:
+            test_clicked = st.button("🔌 Test", disabled=not api_key, use_container_width=True)
+        with status_col:
+            if "connection_ok" in st.session_state:
+                st.caption("✅ Connected" if st.session_state["connection_ok"] else "❌ Failed — see below")
+        if test_clicked:
+            with st.spinner("Testing…"):
+                try:
+                    OpenRouterProvider(Secrets(api_key), model=model_id).test_connection()
+                    st.session_state["connection_ok"] = True
+                    st.session_state.pop("connection_error", None)
+                except LLMError as exc:
+                    st.session_state["connection_ok"] = False
+                    st.session_state["connection_error"] = _friendly_llm_error(exc)
+                st.session_state["tested_key"] = (api_key, model_id)
+            st.rerun()
+
+        if st.session_state.get("connection_ok") is False and "connection_error" in st.session_state:
+            st.error(st.session_state["connection_error"])
+
         st.caption("One OpenRouter key powers every agent below. Transcription runs locally and needs no key.")
 
     with st.expander("How it works"):
@@ -114,9 +153,9 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Hero
 # ---------------------------------------------------------------------------
-col_logo, col_title = st.columns([1, 9], vertical_alignment="center")
+col_logo, col_title = st.columns([1, 12], vertical_alignment="center")
 with col_logo:
-    st.image("assets/logo.png", width=64)
+    st.image("assets/logo.png", width=40)
 with col_title:
     st.title("Description → Code Generator")
     st.caption("A 5-agent SDLC pipeline turns a spoken description into a working prototype.")
@@ -215,7 +254,7 @@ def _run_pipeline(transcript: str) -> None:
     try:
         result = orchestrator.run(transcript, on_stage=on_stage)
     except LLMError as exc:
-        st.error(f"The model backend failed: {exc}")
+        st.error(_friendly_llm_error(exc))
         return
     st.session_state["result"] = result
     st.session_state["last_transcript"] = transcript
@@ -261,44 +300,38 @@ if st.session_state.pop("regenerate_requested", False) and "last_transcript" in 
 if "result" in st.session_state:
     result = st.session_state["result"]
 
-    st.subheader("Result")
-    st.success(result.summary)
+    st.success(result.summary, icon="✅")
 
     col_left, col_right = st.columns(2)
     with col_left:
+        with st.expander("Requirements", expanded=False):
+            st.json(result.requirements.to_dict())
+        with st.expander("Architecture", expanded=False):
+            st.json(result.architecture.to_dict())
         with st.container(border=True):
-            st.write("**Requirements**")
-            with st.expander("View", expanded=False):
-                st.json(result.requirements.to_dict())
-        with st.container(border=True):
-            st.write("**Architecture**")
-            with st.expander("View", expanded=False):
-                st.json(result.architecture.to_dict())
-        with st.container(border=True):
-            st.write(f"**QA history** ({result.iterations} iteration(s))")
+            st.caption(f"QA history — {result.iterations} iteration(s)")
             for i, qa in enumerate(result.qa_reports, start=1):
                 st.write(f"Pass {i}: {'✅ passed' if qa.passed else '⚠️ issues found'}")
                 for issue in qa.issues:
                     st.caption(f"– {issue}")
     with col_right:
-        with st.container(border=True):
-            st.write("**Live preview**")
-            st.components.v1.html(result.html, height=440, scrolling=True)
-            dl_col, regen_col, reset_col = st.columns(3)
-            with dl_col:
-                st.download_button("⬇ Download", data=result.html, file_name="index.html", mime="text/html", use_container_width=True)
-            with regen_col:
-                if st.button("🔁 Regenerate", use_container_width=True):
-                    st.session_state["regenerate_requested"] = True
-                    st.rerun()
-            with reset_col:
-                if st.button("↺ Start over", use_container_width=True):
-                    st.session_state.pop("result", None)
-                    st.session_state.pop("last_transcript", None)
-                    st.session_state["input_generation"] = st.session_state.get("input_generation", 0) + 1
-                    st.rerun()
-            with st.expander("View source"):
-                st.code(result.html, language="html")
+        st.caption("Live preview")
+        st.components.v1.html(result.html, height=340, scrolling=True)
+        dl_col, regen_col, reset_col = st.columns(3)
+        with dl_col:
+            st.download_button("⬇ Download", data=result.html, file_name="index.html", mime="text/html", use_container_width=True)
+        with regen_col:
+            if st.button("🔁 Regenerate", use_container_width=True):
+                st.session_state["regenerate_requested"] = True
+                st.rerun()
+        with reset_col:
+            if st.button("↺ Start over", use_container_width=True):
+                st.session_state.pop("result", None)
+                st.session_state.pop("last_transcript", None)
+                st.session_state["input_generation"] = st.session_state.get("input_generation", 0) + 1
+                st.rerun()
+        with st.expander("View source"):
+            st.code(result.html, language="html")
 
     with st.expander("Prompt log (every prompt sent to the model)"):
         for entry in result.prompt_log:

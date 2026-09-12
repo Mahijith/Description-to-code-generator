@@ -15,6 +15,8 @@ baseRadius = "8px"
 buttonRadius = "8px"
 showWidgetBorder = true
 linkUnderline = false
+headingFontSizes = ["26px", "21px", "18px", "15px", "13px", "12px"]
+headingFontWeights = [650, 600, 600, 600, 550, 550]
 
 [theme.light]
 primaryColor = "#7c3aed"
@@ -29,6 +31,8 @@ baseRadius = "8px"
 buttonRadius = "8px"
 showWidgetBorder = true
 linkUnderline = false
+headingFontSizes = ["26px", "21px", "18px", "15px", "13px", "12px"]
+headingFontWeights = [650, 600, 600, 600, 550, 550]
 
 [theme.dark.sidebar]
 backgroundColor = "#0b0e14"

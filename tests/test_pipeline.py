@@ -1,5 +1,9 @@
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -7,7 +11,7 @@ from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent,
 from pipeline.llm import MockLLMProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
-from pipeline.transcribe import PassthroughTranscriber, make_transcriber_for
+from pipeline.transcribe import LocalWhisperTranscriber, PassthroughTranscriber, make_transcriber_for
 
 SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
 
@@ -29,6 +33,25 @@ def test_secrets_reports_no_key():
     assert not secrets.has_openrouter_key
     with pytest.raises(ValueError):
         secrets.reveal_openrouter_key()
+
+
+def test_test_connection_succeeds_on_a_working_provider():
+    class OkProvider(MockLLMProvider):
+        def complete(self, prompt):
+            return "OK"
+
+    assert OkProvider().test_connection() == "OK"
+
+
+def test_test_connection_propagates_llm_error():
+    from pipeline.llm import LLMError, LLMProvider
+
+    class BrokenProvider(LLMProvider):
+        def complete(self, prompt):
+            raise LLMError("OpenRouter rejected the API key (401 Unauthorized)")
+
+    with pytest.raises(LLMError, match="401"):
+        BrokenProvider().test_connection()
 
 
 def test_passthrough_transcriber_reads_text_file(tmp_path):
@@ -107,6 +130,44 @@ def test_orchestrator_runs_full_loop_and_ends_passed():
     assert len(result.prompt_log) == len(orchestrator.prompt_log)
     # every prompt actually sent is recorded, in call order
     assert [p["stage"] for p in result.prompt_log][:3] == ["pm_kickoff", "requirements", "architect"]
+
+
+def test_local_whisper_transcriber_joins_segments_and_cleans_up_temp_files(tmp_path):
+    """The real faster-whisper model needs a network call to download its
+    weights, which isn't something a unit test should depend on — so the
+    model itself is mocked here. What's under real test is everything
+    around it: joining segment text, and (for video input) invoking ffmpeg
+    to extract the audio track and cleaning up the temp .wav afterwards.
+    """
+    transcriber = LocalWhisperTranscriber(model_size="tiny")
+    fake_segments = [MagicMock(text=" Hello world."), MagicMock(text=" This is a test.")]
+    fake_model = MagicMock()
+    fake_model.transcribe.return_value = (fake_segments, {"language": "en"})
+
+    audio_path = tmp_path / "in.wav"
+    audio_path.write_bytes(b"RIFF....WAVEfmt ")  # never actually decoded; the model is mocked
+    with patch.object(transcriber, "_get_model", return_value=fake_model):
+        assert transcriber.transcribe(audio_path) == "Hello world. This is a test."
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg not installed in this environment")
+
+    video_path = tmp_path / "in.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y",
+            "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+            "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+            "-shortest", "-c:v", "libx264", "-c:a", "aac", str(video_path),
+        ],
+        check=True, capture_output=True,
+    )
+    before = set(Path(tempfile.gettempdir()).glob("*.wav"))
+    with patch.object(transcriber, "_get_model", return_value=fake_model):
+        assert transcriber.transcribe(video_path) == "Hello world. This is a test."
+    after = set(Path(tempfile.gettempdir()).glob("*.wav"))
+    assert after == before, "temp .wav extracted from the video was not cleaned up"
 
 
 def test_orchestrator_respects_max_iterations_even_if_never_passes():

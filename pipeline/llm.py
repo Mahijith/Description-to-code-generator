@@ -32,6 +32,13 @@ class LLMProvider(ABC):
     def complete(self, prompt: str) -> str:
         """Return the model's raw text reply to `prompt`."""
 
+    def test_connection(self) -> str:
+        """One cheap call to confirm the key/model combo actually works,
+        before spending a full 5-agent run on it. Returns the raw reply on
+        success; raises LLMError (with the real cause) on failure.
+        """
+        return self.complete("Reply with exactly one word: OK")
+
     def complete_json(self, prompt: str) -> dict | list:
         """Return the reply parsed as JSON, tolerant of prose around it."""
         raw = self.complete(prompt)

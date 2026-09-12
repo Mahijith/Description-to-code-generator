@@ -187,6 +187,39 @@ The same pass also caught (and fixed) a latent issue where clicking
 whole script — would have made the entire Result section vanish, because
 it lived in a local variable instead of `st.session_state`.
 
+## Round three: testing the real audio path, and a connection-test button
+
+Up to this point every test — including all the Playwright runs — had gone
+through the text-paste input, never the actual audio transcription code.
+That's a gap: `LocalWhisperTranscriber` is the part of the app most likely
+to break in ways a text-only test can't catch (wrong ffmpeg invocation,
+temp files not cleaned up, a model that fails to load). So before adding
+anything new, I closed it: installed `ffmpeg` and `espeak-ng` in this
+sandbox, synthesized a real 18-second spoken app description with
+espeak-ng, converted it to mp3, and ran it through the actual transcriber
+code. That surfaced a real, sandbox-specific limitation rather than a code
+bug: `faster-whisper` downloads its model from Hugging Face Hub on first
+use, and this sandbox's network policy blocks huggingface.co outright.
+Everything *around* that call — ffmpeg extracting audio from a synthetic
+test video, joining Whisper's segment objects into one transcript, cleaning
+up the temp `.wav` file afterward — checks out and is now a permanent test
+(mocking only the model itself, since that's the one piece that needs a
+network call this environment won't allow). Streamlit Community Cloud has
+normal outbound internet access, so the actual model download should work
+fine there; that's the one part of this project I can't verify from inside
+this sandbox and said so plainly rather than claiming a live run.
+
+**Adding a "Test connection" button** for the OpenRouter key turned up a
+second real bug the same way the UI-polish round did: the handler called
+`st.error(...)` inside an `except` block and then unconditionally called
+`st.rerun()` right after it — which interrupts the script immediately, so
+the error text never actually reached the browser before being wiped by
+the rerun it triggered. Caught this by clicking the button with Playwright
+using a deliberately bad key and noticing the failure *badge* appeared but
+the detailed message didn't. Fixed by storing the message in
+`session_state` (the same pattern already used for `result`) and rendering
+it on every run instead of only inside the failing branch.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

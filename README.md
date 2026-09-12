@@ -78,8 +78,9 @@ Open the sidebar and either:
 - turn on **Demo mode** — runs the full 5-agent pipeline (including the
   QA→Developer loop) against deterministic canned responses, no API key,
   no network call, works immediately; or
-- turn it off and paste in a **free OpenRouter API key** (see below) to
-  run it against real models.
+- turn it off, paste in a **free OpenRouter API key** (see below), and hit
+  **🔌 Test** to confirm the key/model combo actually works before running
+  the full pipeline on it.
 
 Pick one of three bundled example descriptions (task tracker, recipe box,
 contact list) from the dropdown and click **Load example** to try it
