@@ -48,7 +48,7 @@ def _friendly_llm_error(exc: LLMError) -> str:
             "deployer: add OPENROUTER_API_KEY under the app's Settings → Secrets."
         )
     if "401" in msg:
-        return "This app's configured API key was rejected by OpenRouter. If you're the deployer: check it at openrouter.ai/keys."
+        return f"This app's configured API key was rejected by OpenRouter ({msg}). If you're the deployer: check it at openrouter.ai/keys."
     if "429" in msg:
         return "OpenRouter rate-limited this app (every visitor shares one key). Wait a bit and try again."
     if "not valid JSON" in msg:
