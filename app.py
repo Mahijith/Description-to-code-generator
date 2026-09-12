@@ -10,38 +10,51 @@ from pathlib import Path
 
 import streamlit as st
 
-from pipeline.llm import DEFAULT_MODEL, LLMError, MockLLMProvider, OpenRouterProvider
+from pipeline.llm import DEFAULT_MODEL, LLMError, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
 from pipeline.transcribe import PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
 st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
 
-# Bridges the deployer's Streamlit Cloud secret into the plain env-var
-# convention pipeline/transcribe.py and cli.py both use, so transcription
-# stays Streamlit-agnostic and works identically from the CLI. st.secrets
-# raises (rather than behaving like an empty dict) when no secrets.toml
-# exists at all, e.g. a fresh deployment with no secrets configured yet —
-# that's not an error here, it just means GROQ_API_KEY isn't set.
-if "GROQ_API_KEY" not in os.environ:
+
+def _bridge_secret_to_env(name: str) -> None:
+    """Copies a Streamlit Cloud secret into the plain env-var convention
+    pipeline/*.py and cli.py use, so those modules stay framework-agnostic
+    and behave the same from the CLI. st.secrets raises (rather than
+    behaving like an empty dict) when no secrets.toml exists at all — e.g.
+    a fresh deployment with nothing configured yet — which isn't an error
+    here, it just means this particular secret isn't set.
+    """
+    if name in os.environ:
+        return
     try:
-        _groq_key = st.secrets.get("GROQ_API_KEY")
+        value = st.secrets.get(name)
     except Exception:
-        _groq_key = None
-    if _groq_key:
-        os.environ["GROQ_API_KEY"] = _groq_key
+        value = None
+    if value:
+        os.environ[name] = value
+
+
+_bridge_secret_to_env("GROQ_API_KEY")
+_bridge_secret_to_env("OPENROUTER_API_KEY")
 
 
 def _friendly_llm_error(exc: LLMError) -> str:
     msg = str(exc)
+    if "No OpenRouter API key configured" in msg:
+        return (
+            "This app isn't configured with an OpenRouter API key yet. If you're the "
+            "deployer: add OPENROUTER_API_KEY under the app's Settings → Secrets."
+        )
     if "401" in msg:
-        return "That API key was rejected. Double-check it at openrouter.ai/keys."
+        return "This app's configured API key was rejected by OpenRouter. If you're the deployer: check it at openrouter.ai/keys."
     if "429" in msg:
-        return "Rate-limited by OpenRouter. Wait a bit and try again, or switch models."
+        return "OpenRouter rate-limited this app (every visitor shares one key). Wait a bit and try again."
     if "not valid JSON" in msg:
-        return "The model didn't reply in the expected format. Try again, or use a different model id."
+        return "The model didn't reply in the expected format. Try again."
     if "Request to OpenRouter failed" in msg:
-        return "Couldn't reach OpenRouter — check your network connection."
+        return "Couldn't reach OpenRouter right now. Try again shortly."
     return msg
 
 # ---------------------------------------------------------------------------
@@ -104,52 +117,10 @@ st.markdown(
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.image("assets/logo.png", width=36)
-    st.subheader("Model")
-    demo_mode = st.toggle(
-        "Demo mode (no API key)",
-        value=True,
-        help="Runs the same 5-agent pipeline against deterministic canned answers — no network call, no key.",
+    st.caption(
+        "Powered by one shared OpenRouter key and one shared Groq key, both "
+        "configured by whoever deployed this app — nothing to enter here."
     )
-    api_key = ""
-    model_id = DEFAULT_MODEL
-    if not demo_mode:
-        api_key = st.text_input(
-            "OpenRouter API key",
-            type="password",
-            help="Free at openrouter.ai/keys. Kept only in this browser session — never logged or saved.",
-        )
-        model_id = st.text_input(
-            "Model id",
-            value=DEFAULT_MODEL,
-            help="Any OpenRouter model id. Check openrouter.ai/models for what's currently free.",
-        )
-        # Changing the key or model invalidates any earlier "known good" test.
-        if st.session_state.get("tested_key") != (api_key, model_id):
-            st.session_state.pop("connection_ok", None)
-            st.session_state.pop("connection_error", None)
-
-        test_col, status_col = st.columns([1, 2], vertical_alignment="center")
-        with test_col:
-            test_clicked = st.button("🔌 Test", disabled=not api_key, use_container_width=True)
-        with status_col:
-            if "connection_ok" in st.session_state:
-                st.caption("✅ Connected" if st.session_state["connection_ok"] else "❌ Failed — see below")
-        if test_clicked:
-            with st.spinner("Testing…"):
-                try:
-                    OpenRouterProvider(Secrets(api_key), model=model_id).test_connection()
-                    st.session_state["connection_ok"] = True
-                    st.session_state.pop("connection_error", None)
-                except LLMError as exc:
-                    st.session_state["connection_ok"] = False
-                    st.session_state["connection_error"] = _friendly_llm_error(exc)
-                st.session_state["tested_key"] = (api_key, model_id)
-            st.rerun()
-
-        if st.session_state.get("connection_ok") is False and "connection_error" in st.session_state:
-            st.error(st.session_state["connection_error"])
-
-        st.caption("One OpenRouter key powers every agent below. Transcription uses a Groq API key configured by whoever deployed this app.")
 
     with st.expander("How it works"):
         st.markdown(
@@ -228,13 +199,8 @@ generate = st.button("Generate", type="primary", disabled=transcript_source is N
 
 
 def _run_pipeline(transcript: str) -> None:
-    if not demo_mode and not api_key:
-        # Guards the "Regenerate" path too: it calls _run_pipeline directly,
-        # bypassing the same check that gates the initial "Generate" click.
-        st.error("Enter an OpenRouter API key in the sidebar, or turn on Demo mode.")
-        return
     try:
-        llm = MockLLMProvider() if demo_mode else OpenRouterProvider(Secrets(api_key), model=model_id)
+        llm = OpenRouterProvider(Secrets(os.environ.get("OPENROUTER_API_KEY")), model=DEFAULT_MODEL)
         orchestrator = Orchestrator(llm)
     except LLMError as exc:
         st.error(_friendly_llm_error(exc))
@@ -287,9 +253,6 @@ def _run_pipeline(transcript: str) -> None:
 if generate:
     if transcript_source is None:
         st.error("Provide a description first: upload a file, record one, or paste text.")
-        st.stop()
-    if not demo_mode and not api_key:
-        st.error("Enter an OpenRouter API key in the sidebar, or turn on Demo mode.")
         st.stop()
 
     kind, payload = transcript_source
@@ -381,6 +344,6 @@ if "result" in st.session_state:
 
 st.divider()
 st.caption(
-    "Built as a multi-agent SDLC pipeline — no Claude, one free OpenRouter key, Groq-hosted Whisper "
-    "transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
+    "Built as a multi-agent SDLC pipeline — no Claude, powered by one shared OpenRouter key and "
+    "Groq-hosted Whisper transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
 )

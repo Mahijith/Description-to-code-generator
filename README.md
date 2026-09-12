@@ -51,13 +51,16 @@ Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. The default implementation is **`OpenRouterProvider`**,
 which talks to [OpenRouter](https://openrouter.ai)'s free-tier models
-(default: `inclusionai/ling-3.0-flash-vl:free`). **No Claude is used
-anywhere in this app** — that was a deliberate choice so the whole thing
-runs on free models a visitor can get a key for in under a minute. Because
-OpenRouter is one gateway, **a single API key powers every agent**; there
-is no per-agent or per-stage key. Swapping in a different backend (Claude,
-Gemini, a local Ollama model) later means writing one more class, not
-rewriting the app.
+(default: `nvidia/nemotron-3-ultra-550b-a55b:free`, picked for coding
+ability — the Developer agent is writing actual HTML/CSS/JS). **No Claude
+is used anywhere in this app** — that was a deliberate choice to run on
+free models. Because OpenRouter is one gateway, **a single API key powers
+every agent**; there is no per-agent or per-stage key. The app owner sets
+this key once (`OPENROUTER_API_KEY`, as a Streamlit Cloud secret or
+environment variable) — visitors don't need their own, and there's no
+sidebar key/model input for them to fill in. Swapping in a different
+backend (Claude, Gemini, a local Ollama model) or model id later means
+writing one more class or changing one constant, not rewriting the app.
 
 Transcription is a separate, independent concern (`pipeline/transcribe.py`):
 audio/video files are transcribed via **Groq's hosted Whisper API**. An
@@ -74,17 +77,17 @@ to try the app) and needs no key at all.
 
 ```bash
 pip install -r requirements.txt
-export GROQ_API_KEY=gsk_...   # free key from console.groq.com/keys, needed only for audio/video transcription
+export OPENROUTER_API_KEY=sk-...  # free key from openrouter.ai/keys, powers the 5-agent pipeline
+export GROQ_API_KEY=gsk_...       # free key from console.groq.com/keys, needed only for audio/video transcription
 streamlit run app.py
 ```
 
-Open the sidebar and either:
-- turn on **Demo mode** — runs the full 5-agent pipeline (including the
-  QA→Developer loop) against deterministic canned responses, no API key,
-  no network call, works immediately; or
-- turn it off, paste in a **free OpenRouter API key** (see below), and hit
-  **🔌 Test** to confirm the key/model combo actually works before running
-  the full pipeline on it.
+Both keys are read once at startup (from these env vars, or from
+`.streamlit/secrets.toml` when running under Streamlit) — there's nothing
+to enter in the app itself. Without `OPENROUTER_API_KEY` set, Generate
+shows a clear "not configured" error instead of running; without
+`GROQ_API_KEY`, the same is true for Record/Upload, but Paste text still
+works with no key at all.
 
 Pick one of three bundled example descriptions (task tracker, recipe box,
 contact list) from the dropdown and click **Load example** to try it
@@ -105,9 +108,8 @@ OPENROUTER_API_KEY=sk-... python cli.py run my_recording.mp3 --out output
 1. Sign up at [openrouter.ai](https://openrouter.ai) (no card required).
 2. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
 3. Check [openrouter.ai/models](https://openrouter.ai/models) (filter by
-   "Free") for what's currently free — free-tier availability and rate
-   limits change over time, so the model id in the sidebar is just a text
-   field you can point at whatever's free when you use it.
+   "Free") if you want to point `DEFAULT_MODEL` (`pipeline/llm.py`) at a
+   different model — free-tier availability changes over time.
 
 ## Deploying it for free (Streamlit Community Cloud)
 
@@ -122,19 +124,19 @@ which runs a Streamlit app straight from a public GitHub repo at no cost:
 4. Click **Deploy**. `requirements.txt` is picked up automatically.
 5. Under the app's **Settings → Secrets**, add:
    ```toml
+   OPENROUTER_API_KEY = "sk-..."
    GROQ_API_KEY = "gsk_..."
    ```
-   (free at [console.groq.com/keys](https://console.groq.com/keys)) so the
-   Record/Upload tabs can transcribe audio. Without it, those tabs still
-   work but show a clear error asking for the key — Paste text always works
-   regardless.
+   (free at [openrouter.ai/keys](https://openrouter.ai/keys) and
+   [console.groq.com/keys](https://console.groq.com/keys)). Both are the
+   *deployer's* keys, set once, shared by every visitor — nobody pastes in
+   their own key or picks a model; Generate and Record/Upload each show a
+   clear "not configured" error if their key is missing, and Paste text
+   always works regardless.
 
-Each visitor pastes in their **own** free OpenRouter key in the sidebar —
-it's kept only in their browser session, never logged or written to disk —
-so whoever deploys this doesn't get stuck paying for everyone else's usage.
-Visitors who don't want to get a key at all can just use **Demo mode**. The
-Groq key is different: it's the *deployer's* key, set once, used for every
-visitor's transcription (Groq's free tier is generous enough for this).
+Since both keys are shared across every visitor rather than one each,
+watch OpenRouter's/Groq's free-tier rate limits under real traffic — a
+busy app can hit them faster than a per-visitor-key design would.
 
 ### Making the deployed app look polished (a few manual, one-time steps)
 
@@ -165,7 +167,9 @@ only the repo/deploy owner can make — nothing here needs code:
   value. The raw key is read in exactly one place in the entire codebase —
   inside `OpenRouterProvider`, to build the request header — and is never
   written into the prompt log, the generated prototype, or any error
-  message.
+  message. Both `OPENROUTER_API_KEY` and `GROQ_API_KEY` live only in
+  Streamlit secrets/environment variables, set by the deployer — never in
+  a widget a visitor's browser can read back.
 - Every agent only ever holds a reference to the `LLMProvider` interface,
   never to `Secrets` itself, so a bug in a prompt can't leak a key.
 - The generated prototype renders list items with `textContent`, never by
@@ -180,12 +184,14 @@ only the repo/deploy owner can make — nothing here needs code:
   with `localStorage` persistence. This is a rapid-prototyping tool, not a
   full application compiler — multi-entity apps, real backends, and
   authentication are out of scope by design.
-- Free-tier model quality and rate limits vary and change over time; if a
-  run fails or produces poor output, try Demo mode to confirm the pipeline
-  itself is working, or try a different free model id.
+- Free-tier model quality and rate limits vary and change over time, and
+  since one `OPENROUTER_API_KEY` is now shared across every visitor, a busy
+  deployment can hit rate limits faster than a per-visitor-key design
+  would; if a run fails, try again shortly or point `DEFAULT_MODEL` at a
+  different model.
 - Audio/video transcription needs a `GROQ_API_KEY` configured by the
   deployer and outbound internet access to Groq; if either is unavailable,
-  paste the transcript as text instead — it always works.
+  paste the transcript as text instead — it always works and needs no key.
 
 ## Project layout
 

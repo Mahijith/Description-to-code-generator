@@ -47,13 +47,21 @@ taste:
 4. **Model backend.** I was asked directly whether the pipeline should use
    Claude at all. It doesn't. Free-tier flexibility mattered more here, so
    every agent talks to an `LLMProvider` interface backed by
-   **OpenRouter** (default model: `inclusionai/ling-3.0-flash-vl:free`),
-   not Claude. I verified that model exists at the URL I was given, but I
+   **OpenRouter** (originally `inclusionai/ling-3.0-flash-vl:free`), not
+   Claude. I verified that model exists at the URL I was given, but I
    could not inspect its actual input modalities or current rate limits —
    `openrouter.ai` is blocked by this sandbox's own network policy for both
    `curl` and a web-fetch tool — so I said that plainly rather than
    asserting specifics I couldn't check, and made the model id a one-line
-   config value instead of a hardcoded assumption.
+   config value instead of a hardcoded assumption. **Update:** the original
+   model was Vision-Language, not chosen for coding ability, and the
+   sidebar originally let each visitor paste in their own OpenRouter key
+   and model id. The deployer later chose to switch to one shared,
+   deployer-supplied key so visitors need nothing, and picked
+   `nvidia/nemotron-3-ultra-550b-a55b:free` specifically for the Developer
+   agent's actual job (writing HTML/CSS/JS) — again a model id I couldn't
+   independently verify from this sandbox, so I took it as given rather
+   than guess a substitute.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
    transcribe a recording. I first moved transcription to `faster-whisper`
@@ -70,10 +78,13 @@ taste:
    and needs one `GROQ_API_KEY` (the deployer's, not each visitor's), but
    sidesteps the system-dependency and resource-limit problems entirely,
    which matters more for a Cloud deployment meant to just work.
-6. **One key, not several.** Since transcription never leaves the machine
-   and every agent goes through the same OpenRouter gateway, the whole app
-   needs exactly one external API key, used uniformly — not a different key
-   per capability.
+6. **Two keys, not one per visitor.** Every agent goes through the same
+   OpenRouter gateway (one `OPENROUTER_API_KEY`) and transcription goes
+   through Groq (one `GROQ_API_KEY`) — two capabilities, two keys, but both
+   set once by the deployer rather than collected from visitors. This is a
+   real trade-off, not a free lunch: it costs the deployer's own free-tier
+   rate limits under real traffic, in exchange for a zero-setup visitor
+   experience.
 7. **OOP structure.** Once there were 5 agents doing structurally identical
    work (build a prompt, call a model, parse the reply), the repetition was
    worth naming: one `Agent` base class holds the shared "ask for text" /
@@ -108,8 +119,8 @@ shown when the list is empty?"), and the Developer prompt, when it
 receives QA feedback, is told to fix exactly what QA flagged. `MockLLMProvider`
 mirrors this honestly (it scripts QA to fail once, citing the missing
 empty-state message, then pass once the Developer's second draft includes
-one) so that Demo mode and the test suite both exercise a *real* two-pass
-loop rather than asserting it happened.
+one) so that the test suite (and `cli.py run --mock`) exercises a *real*
+two-pass loop rather than asserting it happened.
 
 **Keeping agents from stepping on each other's job.** The Architect's
 prompt originally also asked for field-level detail, which duplicated the
@@ -265,7 +276,11 @@ the rerun it triggered. Caught this by clicking the button with Playwright
 using a deliberately bad key and noticing the failure *badge* appeared but
 the detailed message didn't. Fixed by storing the message in
 `session_state` (the same pattern already used for `result`) and rendering
-it on every run instead of only inside the failing branch.
+it on every run instead of only inside the failing branch. **Update:** this
+button, along with the rest of the per-visitor key/model sidebar UI, was
+later removed entirely when the deployer switched to one shared,
+deployer-supplied `OPENROUTER_API_KEY` — there's no visitor-facing
+connection to test anymore, since visitors never enter a key.
 
 ## What I'd do next with more time
 
@@ -277,6 +292,7 @@ it on every run instead of only inside the failing branch.
 - Add a second, independent QA pass that actually executes the generated
   JS in a headless browser (the way this project's own Playwright test
   drives the app) rather than relying on a model reading its own code.
-- Let a user pick from a short list of known-good free OpenRouter models
-  in the sidebar instead of typing a model id by hand, refreshed from
-  OpenRouter's models API at deploy time.
+- Give the deployer (not visitors — that sidebar UI is gone now) a small
+  admin-only way to check the configured `OPENROUTER_API_KEY`/model still
+  work, since the old visitor-facing "Test connection" button no longer
+  exists.

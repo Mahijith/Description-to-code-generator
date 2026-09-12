@@ -1,9 +1,9 @@
 """LLM backends behind one interface, so an agent never knows or cares which
 model actually answers it.
 
-OpenRouterProvider is the default (free-tier models, one shared API key).
-MockLLMProvider is deterministic and needs no network/key at all — it backs
-both the test suite and the app's "Demo mode".
+OpenRouterProvider is the default (one shared, deployer-supplied API key —
+see app.py). MockLLMProvider is deterministic and needs no network/key at
+all — it backs the test suite and `cli.py run --mock`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,10 @@ import requests
 
 from pipeline.secrets import Secrets
 
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-vl:free"
+# Picked for coding ability specifically (the Developer agent writes the
+# actual prototype HTML/CSS/JS) rather than the original vision-language
+# default, which couldn't do that job. Free-tier model on OpenRouter.
+DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
