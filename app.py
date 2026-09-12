@@ -268,20 +268,34 @@ if generate:
         st.error("Enter an OpenRouter API key in the sidebar, or turn on Demo mode.")
         st.stop()
 
-    with st.status("Transcribing...", expanded=False) as status:
-        kind, payload = transcript_source
+    kind, payload = transcript_source
+    status_label = "Transcribing..." if kind == "text" else "Transcribing (first use downloads the speech model — can take a minute)..."
+    with st.status(status_label, expanded=False) as status:
         try:
             if kind == "text":
                 transcript = PassthroughTranscriber.from_text(payload)
             else:
+                audio_bytes = payload.getvalue()
+                if len(audio_bytes) < 1000:
+                    raise TranscriptionError(
+                        "No audio was captured (the recording is empty). Check that your "
+                        "browser has microphone access for this site and the right input "
+                        "device selected, then try recording again — or paste the "
+                        "description as text instead."
+                    )
                 suffix = Path(getattr(payload, "name", "recording.wav")).suffix or ".wav"
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                    tmp.write(payload.getvalue())
+                    tmp.write(audio_bytes)
                     tmp_path = tmp.name
                 transcriber = make_transcriber_for(tmp_path)
                 transcript = transcriber.transcribe(tmp_path)
+                if not transcript.strip():
+                    raise TranscriptionError(
+                        "Transcription produced no text. The recording may be silent — "
+                        "check your microphone and try again, or paste the description as text."
+                    )
         except TranscriptionError as exc:
-            status.update(label="Transcription failed", state="error")
+            status.update(label="Transcription failed", state="error", expanded=True)
             st.error(str(exc))
             st.stop()
         status.update(label="Transcribed", state="complete")

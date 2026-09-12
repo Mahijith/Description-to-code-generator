@@ -11,7 +11,7 @@ from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent,
 from pipeline.llm import MockLLMProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
-from pipeline.transcribe import LocalWhisperTranscriber, PassthroughTranscriber, make_transcriber_for
+from pipeline.transcribe import LocalWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
 SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
 
@@ -168,6 +168,19 @@ def test_local_whisper_transcriber_joins_segments_and_cleans_up_temp_files(tmp_p
         assert transcriber.transcribe(video_path) == "Hello world. This is a test."
     after = set(Path(tempfile.gettempdir()).glob("*.wav"))
     assert after == before, "temp .wav extracted from the video was not cleaned up"
+
+
+def test_local_whisper_wraps_model_load_failures_as_transcription_error():
+    """A blocked network, a Hugging Face outage, or a bad proxy all surface as
+    some arbitrary exception several frames deep inside WhisperModel's
+    constructor (httpx/huggingface_hub). Without wrapping it, that crashes
+    the whole request instead of showing the user something actionable —
+    this is the bug found by testing the real audio path end to end.
+    """
+    transcriber = LocalWhisperTranscriber(model_size="tiny")
+    with patch("faster_whisper.WhisperModel", side_effect=RuntimeError("403 Forbidden")):
+        with pytest.raises(TranscriptionError, match="Couldn't load the speech-to-text model"):
+            transcriber._get_model()
 
 
 def test_orchestrator_respects_max_iterations_even_if_never_passes():

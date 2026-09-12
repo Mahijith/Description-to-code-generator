@@ -60,7 +60,20 @@ class LocalWhisperTranscriber(Transcriber):
                     "faster-whisper is not installed. Install it, or paste the "
                     "transcript as text instead."
                 ) from exc
-            self._model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
+            try:
+                self._model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
+            except Exception as exc:
+                # First use downloads the model from Hugging Face Hub — this is
+                # where a blocked/unreliable network, a proxy, or a Hub outage
+                # surfaces. Without this, the raw exception (often several
+                # frames deep in httpx/huggingface_hub) crashes the whole
+                # request instead of showing a clear, actionable message.
+                raise TranscriptionError(
+                    "Couldn't load the speech-to-text model (it downloads from "
+                    "Hugging Face on first use, which needs outbound internet "
+                    f"access). Underlying error: {exc}. Paste the transcript as "
+                    "text instead, or check the network this app is running on."
+                ) from exc
         return self._model
 
     def transcribe(self, path: str | Path) -> str:
