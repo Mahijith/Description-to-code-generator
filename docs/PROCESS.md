@@ -342,6 +342,31 @@ silently propagating broken HTML. This doesn't guarantee every free model
 has a large enough window for this app's biggest prompt, but it turns a
 silent, confusing failure into a diagnosable one.
 
+## Round seven: the deployer was right, and the diagnostic proved it
+
+Round six's error message asserted "this model's free-tier output limit is
+too small" without ever showing evidence for it — and the deployer pushed
+back, correctly, that this looked like the app's own cap rather than
+anything the model or provider imposed. Rather than argue the point a
+third time, I added the actual data: OpenRouter's response carries a
+`usage.completion_tokens` figure showing exactly how many tokens the model
+produced before `finish_reason: "length"` fired. The next failure showed
+`completion_tokens` at precisely 16000 — the exact value `MAX_OUTPUT_TOKENS`
+was set to. That's conclusive: for this model, the app's own cap was the
+real bottleneck, not some smaller provider-side ceiling, and my working
+theory going into that exchange was wrong. Raised `MAX_OUTPUT_TOKENS` to
+32000 accordingly, and left the reasoning about *why* in the code comment
+so this doesn't need re-litigating from scratch next time.
+
+One caveat worth stating plainly rather than discovering the hard way: if
+a future failure again shows `completion_tokens` landing exactly on
+whatever the current cap is, that stops being evidence of "raise the cap
+more" and starts being evidence of a model that doesn't converge on a
+single, complete file — no ceiling is high enough for a model that
+rambles indefinitely. That would call for tightening the Developer
+prompt's constraints or picking a different model, not another token-limit
+increase.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

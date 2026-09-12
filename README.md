@@ -195,7 +195,7 @@ only the repo/deploy owner can make — nothing here needs code:
   deployer and outbound internet access to Groq; if either is unavailable,
   paste the transcript as text instead — it always works and needs no key.
 - Every OpenRouter request asks for `MAX_OUTPUT_TOKENS` (`pipeline/llm.py`,
-  currently 16000) tokens back, and a reply that still gets cut off (a
+  currently 32000) tokens back, and a reply that still gets cut off (a
   model's own free-tier cap can be smaller) raises a clear error rather
   than silently handing a truncated HTML file to QA — but a model with a
   genuinely small output window will keep hitting that ceiling on the

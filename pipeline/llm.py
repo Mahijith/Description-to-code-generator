@@ -29,8 +29,15 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # HTML/CSS/JS prototype needs) and silently truncate mid-response — no
 # error, just an incomplete Developer-stage output. This doesn't force a
 # model to use all of it; it just stops our own code from being the
-# limiting factor.
-MAX_OUTPUT_TOKENS = 16000
+# limiting factor. Confirmed via the truncation error's own token count
+# (usage.completion_tokens came back exactly equal to the requested cap,
+# not some smaller provider ceiling) that this value itself was the actual
+# bottleneck for at least one model tried — raised accordingly. If a
+# future failure again shows completion_tokens landing exactly on this
+# number, that's a different problem (the model isn't converging on a
+# single, complete file) that no further increase will fix — see
+# docs/PROCESS.md round seven.
+MAX_OUTPUT_TOKENS = 32000
 
 
 class LLMError(RuntimeError):
