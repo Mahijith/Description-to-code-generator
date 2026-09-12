@@ -1,5 +1,10 @@
 """Wires the agents together and runs the SDLC pipeline, including the
-QA -> Developer feedback loop.
+optional QA -> Developer feedback loop (bounded by max_qa_iterations,
+default 1 — one solid Developer pass with a single QA review, no
+automatic retry; a longer app-description or a slower free model makes
+each extra round-trip through the loop a real chance to hit a rate limit,
+timeout, or truncation, so the app no longer loops by default. Pass a
+higher max_qa_iterations explicitly to re-enable retries).
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ StageCallback = Callable[[str, str], None]  # (stage_name, status) -> None
 
 
 class Orchestrator:
-    def __init__(self, llm: LLMProvider, max_qa_iterations: int = 2):
+    def __init__(self, llm: LLMProvider, max_qa_iterations: int = 1):
         self._max_qa_iterations = max_qa_iterations
         self.prompt_log: list[dict] = []
         self._pm = ProjectManagerAgent(llm, self.prompt_log)

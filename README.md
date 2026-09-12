@@ -5,8 +5,9 @@
 Turn a spoken audio/video description of an app into a working prototype,
 using a small team of AI agents that mirror a real software development
 lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
-Developer, and a QA Reviewer, with a genuine feedback loop between QA and
-the Developer.
+Developer, and a QA Reviewer. The `Orchestrator` supports a bounded
+QA→Developer retry loop, but the app runs one solid pass by default (see
+"How it works" below for why).
 
 <p>
   <img src="docs/screenshots/landing-dark.png" width="49%" alt="App landing screen, dark theme">
@@ -33,16 +34,24 @@ recording (upload or microphone)
  Requirements Analyst ──requirements.json──▶
  Architect ──architecture.json (incl. chosen language)──▶
  Developer ──source code──▶
- QA Reviewer ──pass/fail + issues──▶
-        │
-        └── if QA fails (max 2 tries): loop back to the Developer with
-            QA's findings, then re-review
+ QA Reviewer ──pass/fail + issues (reported, not auto-retried by default)──▶
         ▼
  Project Manager writes a final summary
         ▼
  a single self-contained, working prototype file
  (no build step, no external requests, no third-party dependencies)
 ```
+
+`Orchestrator` still supports looping QA's findings back to the Developer
+for another pass (`max_qa_iterations`, fully tested in
+`tests/test_pipeline.py`) — but the app now defaults to
+`max_qa_iterations=1`, one Developer pass and one QA review, no automatic
+retry. On a longer description or a slower free model, each extra
+round-trip through the loop was a real chance to hit a rate limit,
+timeout, or the truncation this project already spent several rounds
+diagnosing (see `docs/PROCESS.md`) — a single solid pass turned out more
+reliable for complex tasks than iterating. If QA finds something you don't
+like, **Regenerate** gives you a fresh attempt.
 
 The Architect picks the language per app rather than defaulting to one —
 a form-driven CRUD app is usually best as one self-contained HTML file

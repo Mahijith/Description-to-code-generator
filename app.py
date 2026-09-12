@@ -131,14 +131,15 @@ st.markdown(
 with st.expander("How it works"):
     st.markdown(
         "Five agents mirror a small software team:\n\n"
-        "1. **Project Manager** — writes a brief, and later decides whether to ship or loop back\n"
+        "1. **Project Manager** — writes a brief, and signs off at the end\n"
         "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
         "3. **Architect** — picks the best language for this app and the technical approach\n"
         "4. **Developer** — writes the prototype\n"
-        "5. **QA Reviewer** — checks it against requirements\n\n"
-        "If QA finds issues, it goes back to the Developer (up to 2 tries) before the "
-        "PM signs off. Powered by one shared OpenRouter key and one shared Groq key, both "
-        "configured by whoever deployed this app — nothing to enter here."
+        "5. **QA Reviewer** — checks it against requirements and reports what it finds\n\n"
+        "One solid pass end to end, no automatic retry loop — if you're not happy with the "
+        "result, click Regenerate for a fresh attempt. Powered by one shared OpenRouter key "
+        "and one shared Groq key, both configured by whoever deployed this app — nothing to "
+        "enter here."
     )
 
 # ---------------------------------------------------------------------------

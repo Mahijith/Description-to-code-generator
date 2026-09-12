@@ -180,7 +180,10 @@ field value contains `<`.
 - **A capped 2-iteration loop**: unbounded QA↔Developer looping risks
   cost/latency blowups on a flaky free model with no guarantee of
   convergence. Two passes catches the common case (one real gap, one fix)
-  without that risk.
+  without that risk. **Update:** even a capped loop turned out to be the
+  wrong default for complex tasks in practice — see round ten. The app now
+  defaults to one pass; the capped-loop capability itself is still there
+  and still tested, just not used by default anymore.
 
 ## Round two: UI polish and free-tier hosting
 
@@ -429,6 +432,39 @@ thresholds, to prove the app's own check fires specifically, not just
 Streamlit's coarser gate) — confirmed the exact error text renders
 correctly, since a live model call still isn't reachable from this
 sandbox for the language-selection half of this round.
+
+## Round ten: the retry loop stopped being an asset on complex tasks
+
+The QA→Developer feedback loop was this project's founding architectural
+idea (round two, above) — the whole reason it's five agents instead of one
+prompt. But the deployer reported it "not looking good" on complex tasks
+and asked for "a solid one time run... finished in one go" instead. I
+asked which loop they meant before touching anything, since the app has
+two things that could plausibly be called a loop (the QA/Developer retry,
+or plain request timeouts) and they behave completely differently — turned
+out to be the retry loop specifically.
+
+The retry loop's premise was that a second Developer pass, armed with
+QA's specific findings, produces something strictly better than the first.
+That holds when the *reason* for a re-try is a real, fixable gap in the
+code. It stops holding once you account for everything this project's own
+debugging rounds already surfaced: every extra round-trip through a
+free-tier model is another chance to hit a rate limit (round three), an
+upstream provider outage (round five), or output truncation (rounds six
+through eight) — failure modes that have nothing to do with code quality
+and every chance of getting *worse*, not better, on a longer or more
+complex app description. A loop that's supposed to fix problems but can
+just as easily introduce new ones on the exact inputs it's meant to help
+with isn't earning its complexity by default.
+
+Changed `Orchestrator`'s default `max_qa_iterations` from 2 to 1 rather
+than deleting the loop: the mechanism is real, still fully exercised by
+`tests/test_pipeline.py` (which pins `max_qa_iterations=2` explicitly), and
+a deployer who wants the old behavior back can still ask for it by passing
+that argument. QA still runs once and reports its findings — that
+information wasn't the problem, the automatic retry on top of it was — and
+`Regenerate` remains the manual equivalent of a second attempt, just
+initiated by a person instead of the pipeline deciding on its own.
 
 ## What I'd do next with more time
 
