@@ -113,6 +113,8 @@ class ArchitectureDoc:
     data_model_notes: str
     screen_breakdown: list[str] = field(default_factory=list)
     style_notes: str = ""
+    language: str = "html"  # a Pygments/st.code language id, e.g. "html", "python"
+    file_extension: str = "html"  # no leading dot, e.g. "html", "py"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -124,6 +126,8 @@ class ArchitectureDoc:
             data_model_notes=str(data.get("data_model_notes", "")),
             screen_breakdown=list(data.get("screen_breakdown", []) or []),
             style_notes=str(data.get("style_notes", "")),
+            language=str(data.get("language") or "html"),
+            file_extension=str(data.get("file_extension") or "html"),
         )
 
 
@@ -145,7 +149,7 @@ class PipelineResult:
     brief: ProjectBrief
     requirements: Requirements
     architecture: ArchitectureDoc
-    html: str
+    code: str
     qa_reports: list[QAReport]
     iterations: int
     summary: str
@@ -156,7 +160,7 @@ class PipelineResult:
             "brief": self.brief.to_dict(),
             "requirements": self.requirements.to_dict(),
             "architecture": self.architecture.to_dict(),
-            "html": self.html,
+            "code": self.code,
             "qa_reports": [q.to_dict() for q in self.qa_reports],
             "iterations": self.iterations,
             "summary": self.summary,

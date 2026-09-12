@@ -46,3 +46,9 @@ borderColor = "#e2e5eb"
 
 [browser]
 gatherUsageStats = false
+
+[server]
+# Coarse client-side guard, slightly above the real 19.5MB cutoff app.py
+# enforces precisely (Groq's transcription API stops accepting files past
+# that point in practice) — Streamlit's own config only takes an int MB.
+maxUploadSize = 20

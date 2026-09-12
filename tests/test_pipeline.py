@@ -203,7 +203,7 @@ def test_orchestrator_runs_full_loop_and_ends_passed():
     assert result.iterations == 2
     assert result.qa_reports[0].passed is False
     assert result.qa_reports[-1].passed is True
-    assert result.html.strip().lower().startswith("<!doctype html>")
+    assert result.code.strip().lower().startswith("<!doctype html>")
     assert result.summary
     assert any(s.startswith("developer (pass 2)") for s, _ in stages)
     assert len(result.prompt_log) == len(orchestrator.prompt_log)

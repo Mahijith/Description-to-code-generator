@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue) ![Streamlit](https://img.shields.io/badge/streamlit-1.38+-ff4b4b) ![License](https://img.shields.io/badge/model%20cost-free%20tier-8b5cf6) ![Tests](https://img.shields.io/badge/tests-passing-2ea043)
 
-Turn a spoken (or typed) description of an app into a working prototype,
+Turn a spoken audio/video description of an app into a working prototype,
 using a small team of AI agents that mirror a real software development
 lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
 Developer, and a QA Reviewer, with a genuine feedback loop between QA and
@@ -22,20 +22,17 @@ menu → Settings) — every visitor gets both, no code needed on their end.
 ## How it works
 
 ```
-recording/transcript
+recording (upload or microphone)
         │
         ▼
- Transcriber
-   ├─ GroqWhisperTranscriber    (Groq's hosted Whisper API — real audio/
-   │                              video file upload, needs one GROQ_API_KEY
-   │                              set by whoever deploys the app)
-   └─ PassthroughTranscriber    (typed/pasted text, or the bundled example)
-        │
+ GroqWhisperTranscriber   (Groq's hosted Whisper API — needs one
+        │                  GROQ_API_KEY set by whoever deploys the app;
+        │                  files over ~19.5MB are rejected before upload)
         ▼
  Project Manager  ──kickoff brief──▶
  Requirements Analyst ──requirements.json──▶
- Architect ──architecture.json──▶
- Developer ──index.html──▶
+ Architect ──architecture.json (incl. chosen language)──▶
+ Developer ──source code──▶
  QA Reviewer ──pass/fail + issues──▶
         │
         └── if QA fails (max 2 tries): loop back to the Developer with
@@ -43,9 +40,16 @@ recording/transcript
         ▼
  Project Manager writes a final summary
         ▼
- a single self-contained, working HTML/CSS/JS prototype
- (localStorage persistence, no build step, no external requests)
+ a single self-contained, working prototype file
+ (no build step, no external requests, no third-party dependencies)
 ```
+
+The Architect picks the language per app rather than defaulting to one —
+a form-driven CRUD app is usually best as one self-contained HTML file
+(`localStorage` persistence, opens directly in a browser); a
+data-processing or automation-style tool is usually better as one
+self-contained Python script. Either way the Developer writes exactly one
+file, matching whatever the Architect decided.
 
 Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
@@ -72,8 +76,8 @@ unreliable first-use model download on the free tier — see
 `docs/PROCESS.md`), so it was replaced with one hosted API call instead.
 The app owner sets one free `GROQ_API_KEY` (console.groq.com/keys) as a
 Streamlit Cloud secret or environment variable; visitors don't need their
-own. Typed/pasted text always works as a fallback (and is the fastest way
-to try the app) and needs no key at all.
+own. Uploads/recordings over ~19.5MB are rejected before ever reaching
+Groq's API, since that's the point it stops accepting files in practice.
 
 ## Running it locally
 
@@ -86,15 +90,13 @@ streamlit run app.py
 
 Both keys are read once at startup (from these env vars, or from
 `.streamlit/secrets.toml` when running under Streamlit) — there's nothing
-to enter in the app itself. Without `OPENROUTER_API_KEY` set, Generate
-shows a clear "not configured" error instead of running; without
-`GROQ_API_KEY`, the same is true for Record/Upload, but Paste text still
-works with no key at all.
+to enter in the app itself, and no sidebar. Without either key set,
+Generate shows a clear "not configured" error instead of running or
+failing silently.
 
-Pick one of three bundled example descriptions (task tracker, recipe box,
-contact list) from the dropdown and click **Load example** to try it
-instantly. After a run, **Regenerate** re-runs the pipeline on the same
-description (useful to see a different draft against a live model), and
+Record or upload a description, click **Generate**, and watch the step
+tracker. After a run, **Regenerate** re-runs the pipeline on the same
+transcript (useful to see a different draft against a live model), and
 **Start over** clears everything back to the input screen.
 
 ### Command line (no Streamlit)
@@ -132,9 +134,8 @@ which runs a Streamlit app straight from a public GitHub repo at no cost:
    (free at [openrouter.ai/keys](https://openrouter.ai/keys) and
    [console.groq.com/keys](https://console.groq.com/keys)). Both are the
    *deployer's* keys, set once, shared by every visitor — nobody pastes in
-   their own key or picks a model; Generate and Record/Upload each show a
-   clear "not configured" error if their key is missing, and Paste text
-   always works regardless.
+   their own key or picks a model; Generate shows a clear "not configured"
+   error if either key is missing.
 
 Since both keys are shared across every visitor rather than one each,
 watch OpenRouter's/Groq's free-tier rate limits under real traffic — a
@@ -174,35 +175,43 @@ only the repo/deploy owner can make — nothing here needs code:
   a widget a visitor's browser can read back.
 - Every agent only ever holds a reference to the `LLMProvider` interface,
   never to `Secrets` itself, so a bug in a prompt can't leak a key.
-- The generated prototype renders list items with `textContent`, never by
-  concatenating user input into `innerHTML`, to avoid XSS-style bugs in the
-  app it produces.
+- The Developer/QA prompts require safe handling of untrusted input
+  regardless of which language the Architect picks: `textContent` instead
+  of string-built `innerHTML` for HTML output, and no string-concatenated
+  shell commands or SQL queries for any other language.
 
 ## Limitations
 
 - Each generated prototype manages one primary entity (the thing the
   recording is mostly about — tasks, contacts, recipes, etc.) with
-  create/edit/delete/complete/filter-style actions, as a single HTML file
-  with `localStorage` persistence. This is a rapid-prototyping tool, not a
-  full application compiler — multi-entity apps, real backends, and
-  authentication are out of scope by design.
+  create/edit/delete/complete/filter-style actions, as a single
+  self-contained source file. This is a rapid-prototyping tool, not a full
+  application compiler — multi-entity apps, real backends, multi-file
+  projects, and authentication are out of scope by design.
+- The Architect chooses the output language per app; there's no way to
+  force a specific one from the UI (the deployer can steer this by editing
+  the Architect's prompt in `pipeline/agents.py`). Only the generated
+  HTML gets a live in-app preview — other languages show as syntax-
+  highlighted source, not an executed result, since there's no safe way to
+  run arbitrary generated code inside the app itself.
 - Free-tier model quality and rate limits vary and change over time, and
   since one `OPENROUTER_API_KEY` is now shared across every visitor, a busy
   deployment can hit rate limits faster than a per-visitor-key design
   would; if a run fails, try again shortly or point `DEFAULT_MODEL` at a
   different model.
-- Audio/video transcription needs a `GROQ_API_KEY` configured by the
-  deployer and outbound internet access to Groq; if either is unavailable,
-  paste the transcript as text instead — it always works and needs no key.
+- Audio/video input needs a `GROQ_API_KEY` configured by the deployer,
+  outbound internet access to Groq, and a file no larger than ~19.5MB
+  (Groq's real cutoff in practice, tighter than its documented 25MB) — the
+  app rejects anything bigger before ever calling the API.
 - This app sends no `max_tokens`/output cap of its own on OpenRouter
   requests — deliberate, per the deployer. If a model's reply still gets
   cut off (`finish_reason: "length"`, meaning the model or provider hit
   *its own* limit), that raises a clear error naming how many tokens the
-  model actually produced, rather than silently handing a truncated HTML
-  file to QA. The Developer stage is most exposed to this since it writes
-  the largest output of any agent; a model that doesn't converge on a
-  single, complete file will keep hitting this regardless of any cap, ours
-  or its own.
+  model actually produced, rather than silently handing a truncated file
+  to QA. The Developer stage is most exposed to this since it writes the
+  largest output of any agent; a model that doesn't converge on a single,
+  complete file will keep hitting this regardless of any cap, ours or its
+  own.
 
 ## Project layout
 
@@ -211,14 +220,14 @@ pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
-  schema.py        ProjectBrief, Requirements, ArchitectureDoc, QAReport, PipelineResult
+  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. language), QAReport, PipelineResult
   agents.py        Agent (ABC) + the 5 SDLC personas
   orchestrator.py  Orchestrator — runs the pipeline incl. the QA/Dev loop
-app.py             Streamlit UI (hero, step tracker, results, buttons)
+app.py             Streamlit UI (hero, step tracker, results, buttons) — no sidebar
 cli.py             headless runner
-.streamlit/config.toml   theme (light + dark; edit here to rebrand)
+.streamlit/config.toml   theme (light + dark) + maxUploadSize
 assets/            logo.png (page icon + in-app mark), social_preview.png
-examples/          sample transcripts (3 example descriptions) + committed mock-mode output
+examples/          sample transcripts (used by cli.py/tests) + committed mock-mode output
 tests/             pytest suite (runs entirely against MockLLMProvider)
 docs/PROCESS.md    the brainstorming / prompt-iteration write-up
 docs/screenshots/  README screenshots

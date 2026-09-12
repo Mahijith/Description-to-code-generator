@@ -1,5 +1,6 @@
-"""Streamlit UI: record/upload/paste a description, watch the SDLC pipeline
-run stage by stage, preview and download the generated prototype.
+"""Streamlit UI: record or upload an audio/video description, watch the
+SDLC pipeline run stage by stage, preview and download the generated
+prototype.
 """
 
 from __future__ import annotations
@@ -13,7 +14,10 @@ import streamlit as st
 from pipeline.llm import DEFAULT_MODEL, LLMError, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
-from pipeline.transcribe import PassthroughTranscriber, TranscriptionError, make_transcriber_for
+from pipeline.transcribe import TranscriptionError, make_transcriber_for
+
+MAX_UPLOAD_BYTES = 19_500_000  # Groq's API stops accepting files above ~19.5MB in practice
+MIME_TYPES = {"html": "text/html", "py": "text/x-python", "js": "text/javascript"}
 
 st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
 
@@ -73,12 +77,6 @@ if _THEME == "dark":
 else:
     C = dict(card="#f6f5fb", border="#e2e5eb", muted="#6b7280", accent="#7c3aed", accent_soft="#7c3aed", danger="#b45309")
 
-EXAMPLES = {
-    "Task tracker": Path("examples/sample_transcript.txt").read_text(),
-    "Recipe box": Path("examples/sample_recipe.txt").read_text(),
-    "Contact list": Path("examples/sample_contacts.txt").read_text(),
-}
-
 STAGE_NODES = [
     ("pm_kickoff", "Kickoff"),
     ("requirements", "Requirements"),
@@ -115,30 +113,6 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.image("assets/logo.png", width=36)
-    st.caption(
-        "Powered by one shared OpenRouter key and one shared Groq key, both "
-        "configured by whoever deployed this app — nothing to enter here."
-    )
-
-    with st.expander("How it works"):
-        st.markdown(
-            "Five agents mirror a small software team:\n\n"
-            "1. **Project Manager** — writes a brief, and later decides whether to ship or loop back\n"
-            "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
-            "3. **Architect** — decides the technical approach\n"
-            "4. **Developer** — writes the prototype\n"
-            "5. **QA Reviewer** — checks it against requirements\n\n"
-            "If QA finds issues, it goes back to the Developer (up to 2 tries) before the "
-            "PM signs off."
-        )
-
-    st.caption("🌓 Use the **⋮ menu (top right) → Settings** to switch light/dark theme.")
-
-# ---------------------------------------------------------------------------
 # Hero
 # ---------------------------------------------------------------------------
 col_logo, col_title = st.columns([1, 12], vertical_alignment="center")
@@ -146,7 +120,7 @@ with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
     st.title("Description → Code Generator")
-    st.caption("A 5-agent SDLC pipeline turns a spoken description into a working prototype.")
+    st.caption("A 5-agent SDLC pipeline turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
     + "".join(f"<span class='badge'>{label}</span>" for _, label in STAGE_NODES)
@@ -154,45 +128,40 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+with st.expander("How it works"):
+    st.markdown(
+        "Five agents mirror a small software team:\n\n"
+        "1. **Project Manager** — writes a brief, and later decides whether to ship or loop back\n"
+        "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
+        "3. **Architect** — picks the best language for this app and the technical approach\n"
+        "4. **Developer** — writes the prototype\n"
+        "5. **QA Reviewer** — checks it against requirements\n\n"
+        "If QA finds issues, it goes back to the Developer (up to 2 tries) before the "
+        "PM signs off. Powered by one shared OpenRouter key and one shared Groq key, both "
+        "configured by whoever deployed this app — nothing to enter here."
+    )
+
 # ---------------------------------------------------------------------------
 # Input
 # ---------------------------------------------------------------------------
-tab_upload, tab_record, tab_text = st.tabs(["Upload audio/video", "Record", "Paste text"])
-transcript_source: tuple[str, object] | None = None
+tab_upload, tab_record = st.tabs(["Upload audio/video", "Record"])
+audio_payload = None
 
 with tab_upload:
-    uploaded = st.file_uploader("Audio or video file describing the app", type=["mp3", "wav", "m4a", "mp4", "mov", "webm"])
+    uploaded = st.file_uploader(
+        "Audio or video file describing the app",
+        type=["mp3", "wav", "m4a", "mp4", "mov", "webm"],
+        help=f"Max {MAX_UPLOAD_BYTES / 1_000_000:.1f}MB — Groq's transcription API rejects larger files.",
+    )
     if uploaded is not None:
-        transcript_source = ("file", uploaded)
+        audio_payload = uploaded
 
 with tab_record:
     recorded = st.audio_input("Record a description")
     if recorded is not None:
-        transcript_source = ("file", recorded)
+        audio_payload = recorded
 
-with tab_text:
-    # Streamlit widgets keep their own frontend value once mounted — clearing
-    # session_state alone won't reset an existing textarea. Bumping the key's
-    # generation suffix forces a fresh widget instance instead.
-    st.session_state.setdefault("input_generation", 0)
-    text_key = f"description_text_{st.session_state['input_generation']}"
-
-    col_pick, col_load = st.columns([3, 1])
-    with col_pick:
-        example_choice = st.selectbox("Example descriptions", list(EXAMPLES.keys()), label_visibility="collapsed")
-    with col_load:
-        if st.button("Load example", use_container_width=True):
-            st.session_state[text_key] = EXAMPLES[example_choice]
-    pasted = st.text_area(
-        "Type or paste a description",
-        height=150,
-        placeholder="So the app I want is basically a...",
-        key=text_key,
-    )
-    if pasted:
-        transcript_source = ("text", pasted)
-
-generate = st.button("Generate", type="primary", disabled=transcript_source is None)
+generate = st.button("Generate", type="primary", disabled=audio_payload is None)
 
 # ---------------------------------------------------------------------------
 # Run the pipeline (persisted in session_state so it survives reruns caused
@@ -253,39 +222,39 @@ def _run_pipeline(transcript: str) -> None:
 
 
 if generate:
-    if transcript_source is None:
-        st.error("Provide a description first: upload a file, record one, or paste text.")
+    if audio_payload is None:
+        st.error("Provide a description first: upload a file or record one.")
         st.stop()
 
-    kind, payload = transcript_source
-    status_label = "Transcribing..." if kind == "text" else "Transcribing via Groq..."
-    with st.status(status_label, expanded=False) as status:
+    with st.status("Transcribing via Groq...", expanded=False) as status:
         try:
-            if kind == "text":
-                transcript = PassthroughTranscriber.from_text(payload)
-            else:
-                audio_bytes = payload.getvalue()
-                if len(audio_bytes) < 1000:
-                    raise TranscriptionError(
-                        "No audio was captured (the recording is empty). Check that your "
-                        "browser has microphone access for this site and the right input "
-                        "device selected, then try recording again — or paste the "
-                        "description as text instead."
-                    )
-                suffix = Path(getattr(payload, "name", "recording.wav")).suffix or ".wav"
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                    tmp.write(audio_bytes)
-                    tmp_path = tmp.name
-                try:
-                    transcriber = make_transcriber_for(tmp_path)
-                    transcript = transcriber.transcribe(tmp_path)
-                finally:
-                    Path(tmp_path).unlink(missing_ok=True)
-                if not transcript.strip():
-                    raise TranscriptionError(
-                        "Transcription produced no text. The recording may be silent — "
-                        "check your microphone and try again, or paste the description as text."
-                    )
+            audio_bytes = audio_payload.getvalue()
+            if len(audio_bytes) < 1000:
+                raise TranscriptionError(
+                    "No audio was captured (the recording is empty). Check that your "
+                    "browser has microphone access for this site and the right input "
+                    "device selected, then try recording again."
+                )
+            if len(audio_bytes) > MAX_UPLOAD_BYTES:
+                raise TranscriptionError(
+                    f"That file is {len(audio_bytes) / 1_000_000:.1f}MB, over the "
+                    f"{MAX_UPLOAD_BYTES / 1_000_000:.1f}MB limit Groq's API accepts. Try a "
+                    "shorter recording, or compress the file first."
+                )
+            suffix = Path(getattr(audio_payload, "name", "recording.wav")).suffix or ".wav"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            try:
+                transcriber = make_transcriber_for(tmp_path)
+                transcript = transcriber.transcribe(tmp_path)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+            if not transcript.strip():
+                raise TranscriptionError(
+                    "Transcription produced no text. The recording may be silent — "
+                    "check your microphone and try again."
+                )
         except TranscriptionError as exc:
             status.update(label="Transcription failed", state="error", expanded=True)
             st.error(str(exc))
@@ -321,11 +290,23 @@ if "result" in st.session_state:
                 for issue in qa.issues:
                     st.caption(f"– {issue}")
     with col_right:
-        st.caption("Live preview")
-        st.components.v1.html(result.html, height=340, scrolling=True)
+        language = result.architecture.language
+        extension = result.architecture.file_extension
+        if language == "html":
+            st.caption("Live preview")
+            st.components.v1.html(result.code, height=340, scrolling=True)
+        else:
+            st.caption(f"Generated {language} source")
+            st.code(result.code, language=language, height=340)
         dl_col, regen_col, reset_col = st.columns(3)
         with dl_col:
-            st.download_button("⬇ Download", data=result.html, file_name="index.html", mime="text/html", use_container_width=True)
+            st.download_button(
+                "⬇ Download",
+                data=result.code,
+                file_name=f"app.{extension}",
+                mime=MIME_TYPES.get(extension, "text/plain"),
+                use_container_width=True,
+            )
         with regen_col:
             if st.button("🔁 Regenerate", use_container_width=True):
                 st.session_state["regenerate_requested"] = True
@@ -334,10 +315,10 @@ if "result" in st.session_state:
             if st.button("↺ Start over", use_container_width=True):
                 st.session_state.pop("result", None)
                 st.session_state.pop("last_transcript", None)
-                st.session_state["input_generation"] = st.session_state.get("input_generation", 0) + 1
                 st.rerun()
-        with st.expander("View source"):
-            st.code(result.html, language="html")
+        if language == "html":
+            with st.expander("View source"):
+                st.code(result.code, language="html")
 
     with st.expander("Prompt log (every prompt sent to the model)"):
         for entry in result.prompt_log:

@@ -77,7 +77,8 @@ def main() -> int:
 
     proto_dir = out_dir / "prototype"
     proto_dir.mkdir(exist_ok=True)
-    (proto_dir / "index.html").write_text(result.html, encoding="utf-8")
+    proto_filename = f"app.{result.architecture.file_extension}"
+    (proto_dir / proto_filename).write_text(result.code, encoding="utf-8")
 
     print(f"Done in {result.iterations} iteration(s). Output written to {out_dir}/")
     return 0

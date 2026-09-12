@@ -110,13 +110,25 @@ This is STAGE: ARCHITECT.
 Requirements: {json.dumps(requirements.to_dict())}
 
 Design the technical approach for a RAPID PROTOTYPE (not production
-software): it must be a single self-contained HTML file — inline CSS and
-JS, no build step, no external network calls, `localStorage` for
-persistence. Decide the data model (how the primary entity is stored) and
-a short screen breakdown.
+software). Choose the SINGLE BEST language for THIS specific app — you are
+not restricted to any one language or platform. For example: a form-driven
+CRUD app that a person would open and click around in is usually best as
+one self-contained HTML file (inline CSS/JS, `localStorage` persistence,
+opens directly in a browser, no server); a data-processing, automation, or
+command-line-style tool described as something you'd "run" rather than
+"open" is usually better as one self-contained Python script (standard
+library only). Pick whichever matches how the app is actually meant to be
+used — do not default to HTML out of habit. Whatever you choose, the whole
+prototype must still be ONE self-contained file: no build step, no
+third-party dependencies to install, no external network calls. Decide the
+data model (how the primary entity is stored) and a short screen/output
+breakdown.
 
 Reply with ONLY a JSON object:
-{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string}}"""
+{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string, "language": string, "file_extension": string}}
+"language" must be a Pygments-recognized language id matching your choice
+(e.g. "html", "python", "javascript"). "file_extension" must match it with
+no leading dot (e.g. "html", "py", "js")."""
         data = self._ask_json("architect", prompt)
         return ArchitectureDoc.from_dict(data)
 
@@ -136,34 +148,40 @@ Requirements: {json.dumps(requirements.to_dict())}
 Architecture: {json.dumps(architecture.to_dict())}
 {feedback_block}
 
-Write the COMPLETE prototype as ONE self-contained HTML file: inline CSS
-and JS, `localStorage` persistence, forms/inputs matching every field of
-the primary entity, and working add/edit/delete plus every action listed
-in requirements (e.g. mark complete, filter). Render list items with
-`textContent`, never by concatenating user input into `innerHTML`. Show a
-friendly empty-state message when the list is empty. No external requests,
-no CDN links, no explanation text.
+Write the COMPLETE prototype as ONE self-contained {architecture.language}
+file matching the architecture above exactly: no build step, no
+third-party dependencies to install, no external network calls. Implement
+every field of the primary entity and every action listed in requirements
+(e.g. add/edit/delete/mark complete/filter/search), and show a friendly
+empty-state message or output when there's nothing to show yet. If the
+chosen language is HTML: inline CSS and JS, `localStorage` persistence,
+and render dynamic content with `textContent`, never by concatenating
+user input into `innerHTML`. For any language: never build a shell
+command, SQL query, or markup string by concatenating untrusted input —
+use safe APIs (parameterized queries, escaped/templated output, etc.)
+instead. No explanation text, no markdown fences.
 
-Reply with ONLY the raw HTML, starting with <!doctype html>."""
-        html = self._ask("developer", prompt)
-        return _strip_code_fence(html)
+Reply with ONLY the raw source code for that one file."""
+        code = self._ask("developer", prompt)
+        return _strip_code_fence(code)
 
 
 class QAReviewerAgent(Agent):
-    def review(self, requirements: Requirements, architecture: ArchitectureDoc, html: str) -> QAReport:
+    def review(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> QAReport:
         prompt = f"""You are the QA Reviewer on a small software team.
 This is STAGE: QA.
 
 Requirements: {json.dumps(requirements.to_dict())}
 Architecture: {json.dumps(architecture.to_dict())}
-Generated prototype (HTML source):
-\"\"\"{html}\"\"\"
+Generated prototype ({architecture.language} source):
+\"\"\"{code}\"\"\"
 
 Check the prototype against the requirements: is every field of the
-primary entity present as an input? Does every action (add/edit/delete/
-complete/filter/etc.) actually work in the code? Is there a message shown
-when the list is empty? Is user input rendered safely (no `innerHTML`
-string-concatenation of it)?
+primary entity present as an input/parameter? Does every action (add/
+edit/delete/complete/filter/etc.) actually work in the code? Is there a
+message or output shown when there's nothing to show yet? Is user input
+handled safely for this language (no string-concatenated shell command,
+SQL query, or markup — e.g. no `innerHTML` built from untrusted input)?
 
 Reply with ONLY a JSON object:
 {{"passed": boolean, "issues": [string, ...]}}

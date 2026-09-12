@@ -236,6 +236,8 @@ class MockLLMProvider(LLMProvider):
                 "data_model_notes": "One array of task objects keyed by a generated id, stored under one localStorage key.",
                 "screen_breakdown": ["Task List (form + filterable table)"],
                 "style_notes": "Clean, minimal, readable at 400px width.",
+                "language": "html",
+                "file_extension": "html",
             }
         if "STAGE: QA" in prompt:
             self._qa_calls += 1

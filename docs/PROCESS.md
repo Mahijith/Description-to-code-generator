@@ -386,6 +386,50 @@ accepted as if it were complete) — the one part of "remove limits" that
 would make failures *harder* to diagnose rather than fewer to hit, so it
 was kept and the reasoning said so plainly rather than assumed obvious.
 
+## Round nine: once it worked, a UI/scope pass
+
+With the pipeline confirmed working end to end, the deployer asked for four
+changes at once: drop the Paste-text input (audio/video only now), let the
+Developer write in whatever language actually fits the described app
+instead of always HTML, remove the sidebar entirely, and cap uploads/
+recordings at 19.5MB — the point they'd found Groq's API actually stops
+accepting files, tighter than the commonly-quoted 25MB figure.
+
+The language change touched more than the Architect's prompt. Once the
+Developer isn't guaranteed to write HTML, a field literally named `.html`
+on `PipelineResult` becomes actively misleading — kept it accurate by
+renaming to `.code` and adding `language`/`file_extension` to
+`ArchitectureDoc`, threading both through the Developer/QA prompts (the
+injection-safety instruction generalized from "no innerHTML string-concat"
+to "no unsafe string-concat into shell/SQL/markup, whatever the language"),
+and the UI (live preview only makes sense for actual HTML; anything else
+renders as syntax-highlighted source via `st.code`, and the download
+filename/mime type follow the chosen extension). Deliberately kept this to
+one file per app rather than reaching for a multi-file/zip-download
+architecture — the request asked for language flexibility, not a bigger
+project structure, and that's a separate design decision if it's ever
+wanted.
+
+"Remove the sidebar completely" was literal, but the "How it works"
+explainer inside it was real onboarding value, not sidebar-specific
+content — moved it into a main-body expander rather than deleting it
+outright, and dropped only the parts that were genuinely sidebar-specific
+(the persistent branding caption, the theme-switch hint that duplicates
+Streamlit's own always-visible menu).
+
+The 19.5MB figure came from the deployer's own observed usage, not a spec
+I could verify (`openrouter.ai`/Groq's docs aside, the *practical* cutoff a
+real API enforces isn't always the documented one) — implemented as given,
+in two layers: `.streamlit/config.toml`'s `maxUploadSize` (an int, so set
+to 20 as a coarse client-side guard) plus an exact byte-level check in
+`app.py` that covers both the uploader and `st.audio_input` precisely at
+19.5MB, with a clear message naming the actual file size. Verified with a
+real Playwright run against a 19.7MB fake file (between the two
+thresholds, to prove the app's own check fires specifically, not just
+Streamlit's coarser gate) — confirmed the exact error text renders
+correctly, since a live model call still isn't reachable from this
+sandbox for the language-selection half of this round.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
@@ -400,3 +444,7 @@ was kept and the reasoning said so plainly rather than assumed obvious.
   admin-only way to check the configured `OPENROUTER_API_KEY`/model still
   work, since the old visitor-facing "Test connection" button no longer
   exists.
+- Actually run non-HTML output (e.g. a generated Python script) somewhere
+  sandboxed and show real results instead of just syntax-highlighted
+  source — meaningfully more scope (execution environment, resource/time
+  limits, output capture) than this round's language *choice* alone.

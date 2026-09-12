@@ -42,17 +42,17 @@ class Orchestrator:
         notify("architect", "done")
 
         qa_reports: list[QAReport] = []
-        html = ""
+        code = ""
         qa_feedback: list[str] | None = None
         iteration = 0
         while True:
             iteration += 1
             notify(f"developer (pass {iteration})", "running")
-            html = self._developer.build(requirements, architecture, qa_feedback)
+            code = self._developer.build(requirements, architecture, qa_feedback)
             notify(f"developer (pass {iteration})", "done")
 
             notify(f"qa (pass {iteration})", "running")
-            qa_report = self._qa.review(requirements, architecture, html)
+            qa_report = self._qa.review(requirements, architecture, code)
             notify(f"qa (pass {iteration})", "done" if qa_report.passed else "failed")
             qa_reports.append(qa_report)
 
@@ -68,7 +68,7 @@ class Orchestrator:
             brief=brief,
             requirements=requirements,
             architecture=architecture,
-            html=html,
+            code=code,
             qa_reports=qa_reports,
             iterations=iteration,
             summary=summary,
