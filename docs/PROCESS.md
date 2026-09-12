@@ -65,11 +65,14 @@ taste:
    OpenRouter turned out to route through Nvidia's own backend, which hit
    a transient "service temporarily overloaded" 502 in practice (exposed a
    real bug in error handling along the way — see the round-five note
-   below). The deployer then switched `DEFAULT_MODEL` twice more, to
-   `thinkingmachines/inkling:free` and then `google/gemma-4-31b-it:free` —
-   neither of which I could verify from this sandbox (`openrouter.ai`
-   stayed blocked throughout this project), so both were taken as given
-   rather than checked.
+   below). The deployer then switched `DEFAULT_MODEL` three more times —
+   `thinkingmachines/inkling:free`, `google/gemma-4-31b-it:free`, then back
+   to a different Nemotron variant, `nvidia/nemotron-3-super-120b-a12b:free`
+   — none of which I could verify from this sandbox (`openrouter.ai` stayed
+   blocked throughout this project), so all were taken as given rather than
+   checked. The common symptom across every one of them ("stopping mid
+   process") turned out not to be about which model was picked at all — see
+   round six.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
    transcribe a recording. I first moved transcription to `faster-whisper`
@@ -307,6 +310,27 @@ indistinguishable from an actual code bug. Fixed by checking for an
 with a test that reproduces the exact response shape from the report
 rather than a synthetic one, so a regression here would be caught by a
 concrete example, not just a plausible-looking mock.
+
+## Round six: every model "stopping mid process" was one root cause
+
+After three more model swaps, the deployer reported the same symptom every
+time: the pipeline "stops mid process." Swapping models again wouldn't have
+told us anything — the pattern itself, recurring identically across
+unrelated models, was the actual signal. Re-reading `OpenRouterProvider.
+complete()` turned up the real cause: the request never set `max_tokens`
+at all, and the response was never checked for truncation. A free-tier
+model that falls back to a small provider-side output default (or applies
+one on its own) would silently hand back a cut-off reply — not an error,
+just incomplete content — and the code would happily hand that straight to
+QA and the live preview. The Developer stage is the one most exposed to
+this, since it writes by far the largest output (a complete self-contained
+HTML/CSS/JS file) of any of the five agents. Fixed two ways: an explicit
+`MAX_OUTPUT_TOKENS` on every request so the app itself is never the
+limiting factor, and a check on the response's `finish_reason` — `"length"`
+means truncation, and now raises a clear, specific error instead of
+silently propagating broken HTML. This doesn't guarantee every free model
+has a large enough window for this app's biggest prompt, but it turns a
+silent, confusing failure into a diagnosable one.
 
 ## What I'd do next with more time
 

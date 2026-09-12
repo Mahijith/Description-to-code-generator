@@ -85,6 +85,40 @@ def test_openrouter_provider_surfaces_embedded_error_object_even_on_http_200():
             provider.complete("hello")
 
 
+def test_openrouter_provider_requests_a_generous_max_tokens():
+    """Without an explicit max_tokens, some free-tier models fall back to a
+    small provider-side default and silently truncate their reply — no
+    error, just an incomplete Developer-stage HTML file. Regression test
+    for that: the request must always ask for a real budget.
+    """
+    from pipeline.llm import MAX_OUTPUT_TOKENS
+
+    provider = OpenRouterProvider(Secrets("sk-test"))
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+    }
+    with patch("requests.post", return_value=fake_response) as mock_post:
+        provider.complete("hello")
+    assert mock_post.call_args.kwargs["json"]["max_tokens"] == MAX_OUTPUT_TOKENS
+
+
+def test_openrouter_provider_raises_on_truncated_reply():
+    """A `finish_reason` of "length" means the model hit the token cap
+    mid-reply — the content is real but incomplete, and accepting it
+    silently is exactly the "pipeline stops mid process" bug: a cut-off
+    HTML file with no error to explain why.
+    """
+    provider = OpenRouterProvider(Secrets("sk-test"), model="some/small-model:free")
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "<!doctype html><html>...cut off"}, "finish_reason": "length"}]
+    }
+    with patch("requests.post", return_value=fake_response):
+        with pytest.raises(LLMError, match="cut the reply short"):
+            provider.complete("hello")
+
+
 def test_passthrough_transcriber_reads_text_file(tmp_path):
     f = tmp_path / "t.txt"
     f.write_text("hello world")

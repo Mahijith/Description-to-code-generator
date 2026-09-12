@@ -22,8 +22,16 @@ from pipeline.secrets import Secrets, mask_key
 # the actual prototype HTML/CSS/JS). Free-tier model on OpenRouter — swap
 # this one constant to change it; every agent shares it, there's no
 # per-agent override.
-DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Without an explicit cap, some free-tier models fall back to a small
+# provider-side default (sometimes well under what a full self-contained
+# HTML/CSS/JS prototype needs) and silently truncate mid-response — no
+# error, just an incomplete Developer-stage output. This doesn't force a
+# model to use all of it; it just stops our own code from being the
+# limiting factor.
+MAX_OUTPUT_TOKENS = 8000
 
 
 class LLMError(RuntimeError):
@@ -112,6 +120,7 @@ class OpenRouterProvider(LLMProvider):
         payload = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_OUTPUT_TOKENS,
         }
         try:
             resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=self._timeout)
@@ -143,9 +152,24 @@ class OpenRouterProvider(LLMProvider):
             message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
             raise LLMError(f"OpenRouter upstream error: {message}")
         try:
-            return data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"Unexpected OpenRouter response shape: {data!r}") from exc
+
+        if choice.get("finish_reason") == "length":
+            # The model hit MAX_OUTPUT_TOKENS (or its own smaller cap) before
+            # finishing — `content` here is a real but truncated reply, not
+            # an error, so nothing above would have caught it. Silently
+            # accepting it is exactly the "stops mid process" bug: the
+            # Developer stage would hand QA/the preview a cut-off HTML file
+            # with no indication anything went wrong.
+            raise LLMError(
+                f"OpenRouter cut the reply short (hit the token limit) with model {self._model!r}. "
+                "This model's free-tier output limit is too small for this stage. Try again, or "
+                "switch to a model with a larger context/output window."
+            )
+        return content
 
 
 @dataclass

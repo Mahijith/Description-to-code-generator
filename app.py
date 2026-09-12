@@ -52,7 +52,7 @@ def _friendly_llm_error(exc: LLMError) -> str:
     if "429" in msg:
         return "OpenRouter rate-limited this app (every visitor shares one key). Wait a bit and try again."
     if "OpenRouter upstream error" in msg:
-        return f"Nemotron's provider is temporarily unavailable ({msg}). This isn't a key/config problem — wait a moment and try again."
+        return f"The model's provider is temporarily unavailable ({msg}). This isn't a key/config problem — wait a moment and try again."
     if "not valid JSON" in msg:
         return "The model didn't reply in the expected format. Try again."
     if "Request to OpenRouter failed" in msg:
