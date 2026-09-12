@@ -61,7 +61,14 @@ taste:
    `nvidia/nemotron-3-ultra-550b-a55b:free` specifically for the Developer
    agent's actual job (writing HTML/CSS/JS) — again a model id I couldn't
    independently verify from this sandbox, so I took it as given rather
-   than guess a substitute.
+   than guess a substitute. **Update:** Nemotron's free-tier access on
+   OpenRouter turned out to route through Nvidia's own backend, which hit
+   a transient "service temporarily overloaded" 502 in practice (exposed a
+   real bug in error handling along the way — see the round-five note
+   below). The deployer then switched `DEFAULT_MODEL` again, to
+   `thinkingmachines/inkling:free` — another model id I couldn't verify
+   from this sandbox (`openrouter.ai` stayed blocked throughout this
+   project), so again taken as given.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
    transcribe a recording. I first moved transcription to `faster-whisper`
@@ -281,6 +288,24 @@ button, along with the rest of the per-visitor key/model sidebar UI, was
 later removed entirely when the deployer switched to one shared,
 deployer-supplied `OPENROUTER_API_KEY` — there's no visitor-facing
 connection to test anymore, since visitors never enter a key.
+
+## Round five: a real bug hiding behind what looked like a key problem
+
+Once both keys (Groq, OpenRouter) were confirmed working, the app still
+failed — this time with a raw dict dump: `Unexpected OpenRouter response
+shape: {'id': ..., 'error': {'message': 'Upstream error from Nvidia:
+Service temporarily overloaded', 'code': 502, ...}}`. Nemotron's free-tier
+backend was genuinely overloaded, but that's not what made this worth
+fixing: `OpenRouterProvider.complete()` only checked `resp.status_code` for
+failures, and OpenRouter had returned this as an HTTP 200 with the error
+embedded in the JSON body instead of a real completion — a legitimate
+provider-proxying pattern the code simply didn't handle, so a real,
+retryable upstream outage surfaced as an opaque "unexpected shape" message
+indistinguishable from an actual code bug. Fixed by checking for an
+`"error"` key in the parsed body regardless of status code, and covered
+with a test that reproduces the exact response shape from the report
+rather than a synthetic one, so a regression here would be caught by a
+concrete example, not just a plausible-looking mock.
 
 ## What I'd do next with more time
 

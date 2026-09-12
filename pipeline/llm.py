@@ -18,10 +18,11 @@ import requests
 
 from pipeline.secrets import Secrets, mask_key
 
-# Picked for coding ability specifically (the Developer agent writes the
-# actual prototype HTML/CSS/JS) rather than the original vision-language
-# default, which couldn't do that job. Free-tier model on OpenRouter.
-DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+# Deployer's choice, picked for coding ability (the Developer agent writes
+# the actual prototype HTML/CSS/JS). Free-tier model on OpenRouter — swap
+# this one constant to change it; every agent shares it, there's no
+# per-agent override.
+DEFAULT_MODEL = "thinkingmachines/inkling:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
