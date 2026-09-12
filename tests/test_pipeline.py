@@ -107,7 +107,8 @@ def test_openrouter_provider_raises_on_truncated_reply():
     """A `finish_reason` of "length" means the model hit the token cap
     mid-reply — the content is real but incomplete, and accepting it
     silently is exactly the "pipeline stops mid process" bug: a cut-off
-    HTML file with no error to explain why.
+    HTML file with no error to explain why. Without a `usage` object in
+    the response, the message falls back to naming only the requested cap.
     """
     provider = OpenRouterProvider(Secrets("sk-test"), model="some/small-model:free")
     fake_response = MagicMock(status_code=200)
@@ -117,6 +118,27 @@ def test_openrouter_provider_raises_on_truncated_reply():
     with patch("requests.post", return_value=fake_response):
         with pytest.raises(LLMError, match="cut the reply short"):
             provider.complete("hello")
+
+
+def test_openrouter_provider_shows_actual_completion_tokens_on_truncation():
+    """When OpenRouter's response includes a `usage` object, the error
+    should show the model's *actual* completion_tokens count, not just the
+    max we requested — that's the concrete evidence needed to tell whether
+    the app's own cap or the model's own (often much smaller) free-tier cap
+    is the real limit, instead of asserting one or the other.
+    """
+    from pipeline.llm import MAX_OUTPUT_TOKENS
+
+    provider = OpenRouterProvider(Secrets("sk-test"), model="some/small-model:free")
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "<!doctype html>...cut off"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 900, "completion_tokens": 412, "total_tokens": 1312},
+    }
+    with patch("requests.post", return_value=fake_response):
+        with pytest.raises(LLMError, match="412") as exc_info:
+            provider.complete("hello")
+    assert str(MAX_OUTPUT_TOKENS) in str(exc_info.value)
 
 
 def test_passthrough_transcriber_reads_text_file(tmp_path):

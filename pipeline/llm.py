@@ -163,10 +163,24 @@ class OpenRouterProvider(LLMProvider):
             # accepting it is exactly the "stops mid process" bug: the
             # Developer stage would hand QA/the preview a cut-off HTML file
             # with no indication anything went wrong.
+            #
+            # `usage.completion_tokens` is how many tokens the model actually
+            # produced before stopping — showing it (instead of just
+            # asserting "the model's cap is too small") turns this into
+            # something the reader can verify: if it's well under
+            # MAX_OUTPUT_TOKENS, the provider's own ceiling is the real
+            # limit, and no max_tokens value this app sends can raise that.
+            usage = data.get("usage") or {}
+            completion_tokens = usage.get("completion_tokens")
+            detail = (
+                f"the model produced {completion_tokens} tokens before stopping (requested up to {MAX_OUTPUT_TOKENS})"
+                if completion_tokens is not None
+                else f"requested up to {MAX_OUTPUT_TOKENS} tokens"
+            )
             raise LLMError(
-                f"OpenRouter cut the reply short (hit the token limit) with model {self._model!r}. "
-                "This model's free-tier output limit is too small for this stage. Try again, or "
-                "switch to a model with a larger context/output window."
+                f"OpenRouter cut the reply short with model {self._model!r}: {detail}. If that count is "
+                "well under the requested max, the model's own output cap is the real limit — no "
+                "max_tokens value can raise that. Try a shorter description, or a different model."
             )
         return content
 
