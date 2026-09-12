@@ -1,10 +1,23 @@
 # Description → Code Generator
 
+![Python](https://img.shields.io/badge/python-3.11+-blue) ![Streamlit](https://img.shields.io/badge/streamlit-1.38+-ff4b4b) ![License](https://img.shields.io/badge/model%20cost-free%20tier-8b5cf6) ![Tests](https://img.shields.io/badge/tests-passing-2ea043)
+
 Turn a spoken (or typed) description of an app into a working prototype,
 using a small team of AI agents that mirror a real software development
 lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
 Developer, and a QA Reviewer, with a genuine feedback loop between QA and
 the Developer.
+
+<p>
+  <img src="docs/screenshots/landing-dark.png" width="49%" alt="App landing screen, dark theme">
+  <img src="docs/screenshots/landing-light.png" width="49%" alt="App landing screen, light theme">
+</p>
+<p>
+  <img src="docs/screenshots/result-dark.png" width="100%" alt="Pipeline result: step tracker, QA history, live preview">
+</p>
+
+Light and dark are Streamlit's own native theme switcher (top-right "⋮"
+menu → Settings) — every visitor gets both, no code needed on their end.
 
 ## How it works
 
@@ -68,6 +81,12 @@ Open the sidebar and either:
 - turn it off and paste in a **free OpenRouter API key** (see below) to
   run it against real models.
 
+Pick one of three bundled example descriptions (task tracker, recipe box,
+contact list) from the dropdown and click **Load example** to try it
+instantly. After a run, **Regenerate** re-runs the pipeline on the same
+description (useful to see a different draft against a live model), and
+**Start over** clears everything back to the input screen.
+
 ### Command line (no Streamlit)
 
 ```bash
@@ -102,6 +121,28 @@ Each visitor pastes in their **own** free OpenRouter key in the sidebar —
 it's kept only in their browser session, never logged or written to disk —
 so whoever deploys this doesn't get stuck paying for everyone else's usage.
 Visitors who don't want to get a key at all can just use **Demo mode**.
+
+### Making the deployed app look polished (a few manual, one-time steps)
+
+Everything below is either already done in this repo or a dashboard click
+only the repo/deploy owner can make — nothing here needs code:
+
+1. **Custom app URL** — in Streamlit Cloud, *App settings → General*, set a
+   clean slug (e.g. `description-to-code.streamlit.app`) instead of the
+   random default.
+2. **GitHub social preview** — repo *Settings → General → Social preview*,
+   upload [`assets/social_preview.png`](assets/social_preview.png) (already
+   generated, 1280×640) so shared links look good on Slack/Twitter/etc.
+3. **Repo description & topics** — same *Settings* page: add a one-line
+   description and topics like `ai`, `streamlit`, `multi-agent`, `llm` for
+   discoverability.
+4. **Rebrand later, if you want**: colors live entirely in
+   [`.streamlit/config.toml`](.streamlit/config.toml) (edit the hex values —
+   both `[theme.light]` and `[theme.dark]` need to stay defined together, or
+   Streamlit removes the light/dark switcher entirely) and the mark itself
+   is [`assets/logo.png`](assets/logo.png) (swap the file, same filename).
+5. **Dark/light mode** — nothing to configure; it's Streamlit's native "⋮"
+   menu → Settings, already on by construction (see previous point).
 
 ## Security notes
 
@@ -142,11 +183,14 @@ pipeline/
   schema.py        ProjectBrief, Requirements, ArchitectureDoc, QAReport, PipelineResult
   agents.py        Agent (ABC) + the 5 SDLC personas
   orchestrator.py  Orchestrator — runs the pipeline incl. the QA/Dev loop
-app.py             Streamlit UI
+app.py             Streamlit UI (hero, step tracker, results, buttons)
 cli.py             headless runner
-examples/          a sample transcript + its committed mock-mode output
+.streamlit/config.toml   theme (light + dark; edit here to rebrand)
+assets/            logo.png (page icon + in-app mark), social_preview.png
+examples/          sample transcripts (3 example descriptions) + committed mock-mode output
 tests/             pytest suite (runs entirely against MockLLMProvider)
 docs/PROCESS.md    the brainstorming / prompt-iteration write-up
+docs/screenshots/  README screenshots
 ```
 
 See [`docs/PROCESS.md`](docs/PROCESS.md) for the design process, the AI

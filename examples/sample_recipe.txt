@@ -1,0 +1,7 @@
+I want a little recipe box app. Each recipe has a name, a list of
+ingredients as one block of text, the cooking time in minutes, and a
+category like breakfast, lunch, dinner, or dessert. I need to add new
+recipes, edit them if I get the steps wrong, and delete ones I don't
+cook anymore. It'd be great to filter by category so I can quickly find
+all my dessert recipes. Just one page is fine, a form at the top and the
+list of recipes below it.

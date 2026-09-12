@@ -137,6 +137,56 @@ field value contains `<`.
   convergence. Two passes catches the common case (one real gap, one fix)
   without that risk.
 
+## Round two: UI polish and free-tier hosting
+
+After the pipeline worked end to end, the ask shifted to making the app
+"look professional" within the free-tier budget, plus real dark/light mode
+and a few more functional buttons. Two things worth recording:
+
+**Dark/light mode was a config bug, not a missing feature.** My first pass
+added a custom `<style>` block and a single `[theme]` block in
+`.streamlit/config.toml`. Before shipping that, I checked Streamlit's own
+bundled theming reference (`streamlit/.agents/skills/developing-with-streamlit/
+references/theme.md`, installed alongside the package) rather than guess —
+and it says explicitly: *"Users can switch between modes in the app
+settings menu only if both `[theme.light]` and `[theme.dark]` are defined.
+A custom theme with just `[theme]` locks the app to a single mode."* I had
+done exactly that, which would have silently removed the built-in
+light/dark switcher for every visitor — the opposite of what was asked. I
+verified this two ways before trusting it: launching the app with
+`--theme.base light` while the old single-`[theme]` config still forced
+dark colors (confirming the lock), then rewriting into `[theme.light]` +
+`[theme.dark]` sections and confirming with Playwright that Streamlit's
+native "⋮ → Settings" menu now actually shows System/Light/Dark, and that
+clicking each one re-renders correctly.
+
+**Prefer the framework's theming over hand-rolled CSS.** The same reference
+doc is explicit that colors/fonts/borders belong in `config.toml`, not
+custom CSS, because it survives Streamlit upgrades and doesn't fight the
+native switcher. I'd initially reached for a CSS block to reproduce card
+styling that `st.container(border=True)` already does natively, and to
+color a footer that `st.divider()` + `st.caption()` with a markdown link
+already themes correctly on their own. I cut both. What's left as custom
+CSS is only the two things Streamlit has no built-in equivalent for at
+all — pill-shaped stage badges and the horizontal step tracker — and even
+those read `st.context.theme.type` at render time to pick their colors, so
+they track whichever theme the visitor currently has active instead of
+assuming one.
+
+**A real, if minor, bug the UI polish pass surfaced**: the original
+`Regenerate`/`Download` interactions exposed that Streamlit widgets don't
+reset when you clear their `session_state` key — the frontend keeps its
+own value until the widget's `key` itself changes. "Start over" looked
+like it worked (the state was cleared) but the textarea kept showing old
+text. Caught this by actually driving the app with Playwright rather than
+trusting the code by inspection, and fixed it by versioning the widget's
+key (`description_text_{generation}`) and bumping the counter on reset —
+the standard pattern for forcing a Streamlit widget to truly reinitialize.
+The same pass also caught (and fixed) a latent issue where clicking
+**Download** — itself just another widget interaction that reruns the
+whole script — would have made the entire Result section vanish, because
+it lived in a local variable instead of `st.session_state`.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

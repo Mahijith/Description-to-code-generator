@@ -1,0 +1,7 @@
+Let's build a simple contacts app. Every contact needs a full name, a
+phone number, an email address, and a category — like family, friend, or
+work. I want to add a contact, edit their details later, and delete
+someone if I need to. There should also be a way to mark a contact as a
+favorite, and I want to filter the list down to just favorites, or just
+one category at a time. One screen, nothing fancy — a form to add people
+and a list underneath showing everyone.

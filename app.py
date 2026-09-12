@@ -14,11 +14,68 @@ from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
 from pipeline.transcribe import PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
-st.set_page_config(page_title="Description → Code Generator", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
 
-EXAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
+# ---------------------------------------------------------------------------
+# Almost all styling (colors, fonts, borders, radii) lives in
+# .streamlit/config.toml, which is the native, theme-switcher-preserving way
+# to brand a Streamlit app — see that file's comment. The only custom CSS
+# below is for two bespoke widgets Streamlit has no built-in equivalent for
+# (pill badges, a step tracker), and even those pick their colors from
+# st.context.theme.type so they adapt when a visitor changes theme.
+# ---------------------------------------------------------------------------
+_THEME = (st.context.theme.type if st.context.theme else None) or "dark"
+if _THEME == "dark":
+    C = dict(card="#1a1f2b", border="#2a3040", muted="#94a3b8", accent="#8b5cf6", accent_soft="#a78bfa", danger="#f59e0b")
+else:
+    C = dict(card="#f6f5fb", border="#e2e5eb", muted="#6b7280", accent="#7c3aed", accent_soft="#7c3aed", danger="#b45309")
 
+EXAMPLES = {
+    "Task tracker": Path("examples/sample_transcript.txt").read_text(),
+    "Recipe box": Path("examples/sample_recipe.txt").read_text(),
+    "Contact list": Path("examples/sample_contacts.txt").read_text(),
+}
+
+STAGE_NODES = [
+    ("pm_kickoff", "Kickoff"),
+    ("requirements", "Requirements"),
+    ("architect", "Architect"),
+    ("developer", "Developer"),
+    ("qa", "QA Review"),
+    ("pm_summary", "Sign-off"),
+]
+
+st.markdown(
+    f"""
+<style>
+.badge-row {{ display:flex; gap:8px; flex-wrap:wrap; margin: 0.4rem 0 1rem 0; }}
+.badge {{ background:{C['card']}; border:1px solid {C['border']}; color:{C['accent_soft']};
+          border-radius:999px; padding:3px 12px; font-size:0.78rem; font-family:monospace; }}
+.step-track {{ display:flex; justify-content:space-between; position:relative; margin: 1.2rem 0 1.6rem 0; }}
+.step-track::before {{ content:''; position:absolute; top:18px; left:6%; right:6%; height:2px;
+          background:{C['border']}; z-index:0; }}
+.step {{ position:relative; z-index:1; display:flex; flex-direction:column; align-items:center;
+          gap:6px; flex:1; }}
+.step-icon {{ width:36px; height:36px; border-radius:50%; display:flex; align-items:center;
+          justify-content:center; background:{C['card']}; border:2px solid {C['border']};
+          color:{C['muted']}; font-size:1rem; }}
+.step-label {{ font-size:0.78rem; color:{C['muted']}; text-align:center; }}
+.step-done .step-icon {{ background:{C['accent']}; border-color:{C['accent']}; color:white; }}
+.step-done .step-label {{ color:inherit; }}
+.step-running .step-icon {{ border-color:{C['accent']}; color:{C['accent']};
+          box-shadow: 0 0 0 3px {C['accent']}22; }}
+.step-failed .step-icon {{ border-color:{C['danger']}; color:{C['danger']}; }}
+.step-badge {{ font-size:0.68rem; color:{C['danger']}; }}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
 with st.sidebar:
+    st.image("assets/logo.png", width=56)
     st.header("Model")
     demo_mode = st.toggle(
         "Demo mode (no API key)",
@@ -38,19 +95,43 @@ with st.sidebar:
             value=DEFAULT_MODEL,
             help="Any OpenRouter model id. Check openrouter.ai/models for what's currently free.",
         )
-        st.caption(
-            "One OpenRouter key powers every agent below. Transcription runs "
-            "locally and needs no key at all."
+        st.caption("One OpenRouter key powers every agent below. Transcription runs locally and needs no key.")
+
+    with st.expander("How it works"):
+        st.markdown(
+            "Five agents mirror a small software team:\n\n"
+            "1. **Project Manager** — writes a brief, and later decides whether to ship or loop back\n"
+            "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
+            "3. **Architect** — decides the technical approach\n"
+            "4. **Developer** — writes the prototype\n"
+            "5. **QA Reviewer** — checks it against requirements\n\n"
+            "If QA finds issues, it goes back to the Developer (up to 2 tries) before the "
+            "PM signs off."
         )
 
-st.title("Description → Code Generator")
-st.caption(
-    "A 5-agent SDLC pipeline (PM → Requirements → Architect → Developer → QA) "
-    "turns a spoken description into a working prototype."
+    st.caption("🌓 Use the **⋮ menu (top right) → Settings** to switch light/dark theme.")
+
+# ---------------------------------------------------------------------------
+# Hero
+# ---------------------------------------------------------------------------
+col_logo, col_title = st.columns([1, 9], vertical_alignment="center")
+with col_logo:
+    st.image("assets/logo.png", width=64)
+with col_title:
+    st.title("Description → Code Generator")
+    st.caption("A 5-agent SDLC pipeline turns a spoken description into a working prototype.")
+st.markdown(
+    "<div class='badge-row'>"
+    + "".join(f"<span class='badge'>{label}</span>" for _, label in STAGE_NODES)
+    + "</div>",
+    unsafe_allow_html=True,
 )
 
+# ---------------------------------------------------------------------------
+# Input
+# ---------------------------------------------------------------------------
 tab_upload, tab_record, tab_text = st.tabs(["Upload audio/video", "Record", "Paste text"])
-transcript_source: str | None = None
+transcript_source: tuple[str, object] | None = None
 
 with tab_upload:
     uploaded = st.file_uploader("Audio or video file describing the app", type=["mp3", "wav", "m4a", "mp4", "mov", "webm"])
@@ -63,18 +144,82 @@ with tab_record:
         transcript_source = ("file", recorded)
 
 with tab_text:
-    if st.button("Load example"):
-        st.session_state["description_text"] = EXAMPLE_TRANSCRIPT
+    # Streamlit widgets keep their own frontend value once mounted — clearing
+    # session_state alone won't reset an existing textarea. Bumping the key's
+    # generation suffix forces a fresh widget instance instead.
+    st.session_state.setdefault("input_generation", 0)
+    text_key = f"description_text_{st.session_state['input_generation']}"
+
+    col_pick, col_load = st.columns([3, 1])
+    with col_pick:
+        example_choice = st.selectbox("Example descriptions", list(EXAMPLES.keys()), label_visibility="collapsed")
+    with col_load:
+        if st.button("Load example", use_container_width=True):
+            st.session_state[text_key] = EXAMPLES[example_choice]
     pasted = st.text_area(
         "Type or paste a description",
         height=150,
-        placeholder=EXAMPLE_TRANSCRIPT[:80] + "...",
-        key="description_text",
+        placeholder="So the app I want is basically a...",
+        key=text_key,
     )
     if pasted:
         transcript_source = ("text", pasted)
 
 generate = st.button("Generate", type="primary", disabled=transcript_source is None)
+
+# ---------------------------------------------------------------------------
+# Run the pipeline (persisted in session_state so it survives reruns caused
+# by other widgets, e.g. clicking Download).
+# ---------------------------------------------------------------------------
+
+
+def _run_pipeline(transcript: str) -> None:
+    llm = MockLLMProvider() if demo_mode else OpenRouterProvider(Secrets(api_key), model=model_id)
+    orchestrator = Orchestrator(llm)
+
+    tracker_box = st.empty()
+    progress: dict[str, str] = {}
+    iteration_count = {"n": 1}
+
+    def node_key_for(stage: str) -> str:
+        if stage.startswith("developer"):
+            iteration_count["n"] = max(iteration_count["n"], int(stage.split("pass ")[1].rstrip(")")))
+            return "developer"
+        if stage.startswith("qa"):
+            iteration_count["n"] = max(iteration_count["n"], int(stage.split("pass ")[1].rstrip(")")))
+            return "qa"
+        return stage
+
+    def render_tracker() -> None:
+        icons = {"pending": "○", "running": "◐", "done": "✓", "failed": "↺"}
+        parts = []
+        for key, label in STAGE_NODES:
+            status = progress.get(key, "pending")
+            badge = (
+                f"<span class='step-badge'> ×{iteration_count['n']}</span>"
+                if key in ("developer", "qa") and iteration_count["n"] > 1
+                else ""
+            )
+            parts.append(
+                f"<div class='step step-{status}'><div class='step-icon'>{icons[status]}</div>"
+                f"<div class='step-label'>{label}{badge}</div></div>"
+            )
+        tracker_box.markdown(f"<div class='step-track'>{''.join(parts)}</div>", unsafe_allow_html=True)
+
+    def on_stage(stage: str, stage_status: str) -> None:
+        key = node_key_for(stage)
+        progress[key] = "done" if stage_status == "done" else ("failed" if stage_status == "failed" else "running")
+        render_tracker()
+
+    render_tracker()
+    try:
+        result = orchestrator.run(transcript, on_stage=on_stage)
+    except LLMError as exc:
+        st.error(f"The model backend failed: {exc}")
+        return
+    st.session_state["result"] = result
+    st.session_state["last_transcript"] = transcript
+
 
 if generate:
     if transcript_source is None:
@@ -105,54 +250,63 @@ if generate:
     with st.expander("Transcript", expanded=False):
         st.text(transcript)
 
-    llm = MockLLMProvider() if demo_mode else OpenRouterProvider(Secrets(api_key), model=model_id)
-    orchestrator = Orchestrator(llm)
+    _run_pipeline(transcript)
 
-    stage_boxes: dict[str, st.delta_generator.DeltaGenerator] = {}
-    stage_labels = {
-        "pm_kickoff": "Project Manager — kickoff brief",
-        "requirements": "Requirements Analyst",
-        "architect": "Architect",
-        "pm_summary": "Project Manager — final summary",
-    }
+if st.session_state.pop("regenerate_requested", False) and "last_transcript" in st.session_state:
+    _run_pipeline(st.session_state["last_transcript"])
 
-    def on_stage(stage: str, stage_status: str) -> None:
-        label = stage_labels.get(stage, stage.replace("_", " ").title())
-        if stage not in stage_boxes:
-            stage_boxes[stage] = st.status(label, expanded=False)
-        icon = {"running": "⏳", "done": "✅", "failed": "⚠️"}[stage_status]
-        stage_boxes[stage].update(label=f"{icon} {label}")
-        if stage_status != "running":
-            stage_boxes[stage].update(state="complete" if stage_status == "done" else "error")
-
-    try:
-        result = orchestrator.run(transcript, on_stage=on_stage)
-    except LLMError as exc:
-        st.error(f"The model backend failed: {exc}")
-        st.stop()
+# ---------------------------------------------------------------------------
+# Result (rendered from session_state so it survives unrelated reruns)
+# ---------------------------------------------------------------------------
+if "result" in st.session_state:
+    result = st.session_state["result"]
 
     st.subheader("Result")
     st.success(result.summary)
 
     col_left, col_right = st.columns(2)
     with col_left:
-        with st.expander("Requirements", expanded=False):
-            st.json(result.requirements.to_dict())
-        with st.expander("Architecture", expanded=False):
-            st.json(result.architecture.to_dict())
-        with st.expander(f"QA history ({result.iterations} iteration(s))", expanded=True):
+        with st.container(border=True):
+            st.write("**Requirements**")
+            with st.expander("View", expanded=False):
+                st.json(result.requirements.to_dict())
+        with st.container(border=True):
+            st.write("**Architecture**")
+            with st.expander("View", expanded=False):
+                st.json(result.architecture.to_dict())
+        with st.container(border=True):
+            st.write(f"**QA history** ({result.iterations} iteration(s))")
             for i, qa in enumerate(result.qa_reports, start=1):
-                st.write(f"**Pass {i}:** {'✅ passed' if qa.passed else '⚠️ issues found'}")
+                st.write(f"Pass {i}: {'✅ passed' if qa.passed else '⚠️ issues found'}")
                 for issue in qa.issues:
-                    st.write(f"- {issue}")
+                    st.caption(f"– {issue}")
     with col_right:
-        st.write("**Live preview**")
-        st.components.v1.html(result.html, height=500, scrolling=True)
-        st.download_button("Download index.html", data=result.html, file_name="index.html", mime="text/html")
-        with st.expander("View source"):
-            st.code(result.html, language="html")
+        with st.container(border=True):
+            st.write("**Live preview**")
+            st.components.v1.html(result.html, height=440, scrolling=True)
+            dl_col, regen_col, reset_col = st.columns(3)
+            with dl_col:
+                st.download_button("⬇ Download", data=result.html, file_name="index.html", mime="text/html", use_container_width=True)
+            with regen_col:
+                if st.button("🔁 Regenerate", use_container_width=True):
+                    st.session_state["regenerate_requested"] = True
+                    st.rerun()
+            with reset_col:
+                if st.button("↺ Start over", use_container_width=True):
+                    st.session_state.pop("result", None)
+                    st.session_state.pop("last_transcript", None)
+                    st.session_state["input_generation"] = st.session_state.get("input_generation", 0) + 1
+                    st.rerun()
+            with st.expander("View source"):
+                st.code(result.html, language="html")
 
     with st.expander("Prompt log (every prompt sent to the model)"):
         for entry in result.prompt_log:
             st.write(f"**{entry['stage']}**")
             st.code(entry["prompt"])
+
+st.divider()
+st.caption(
+    "Built as a multi-agent SDLC pipeline — no Claude, one free OpenRouter key, local Whisper "
+    "transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
+)

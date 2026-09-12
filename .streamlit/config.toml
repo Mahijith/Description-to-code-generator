@@ -1,0 +1,44 @@
+# Defining BOTH [theme.light] and [theme.dark] (rather than one bare
+# [theme]) is required for Streamlit to keep offering its native theme
+# switcher (the "⋮" menu -> Settings) to every visitor — a single [theme]
+# block locks the app to one mode. To rebrand, edit the hex values below.
+[theme.dark]
+primaryColor = "#8b5cf6"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1f2b"
+textColor = "#e6e6e6"
+linkColor = "#a78bfa"
+borderColor = "#2a3040"
+violetColor = "#8b5cf6"
+font = "sans serif"
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#7c3aed"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f6f5fb"
+textColor = "#1f2328"
+linkColor = "#7c3aed"
+borderColor = "#e2e5eb"
+violetColor = "#7c3aed"
+font = "sans serif"
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+linkUnderline = false
+
+[theme.dark.sidebar]
+backgroundColor = "#0b0e14"
+secondaryBackgroundColor = "#161b26"
+borderColor = "#242a38"
+
+[theme.light.sidebar]
+backgroundColor = "#f6f5fb"
+secondaryBackgroundColor = "#eeeafc"
+borderColor = "#e2e5eb"
+
+[browser]
+gatherUsageStats = false
