@@ -26,9 +26,9 @@ recording/transcript
         │
         ▼
  Transcriber
-   ├─ LocalWhisperTranscriber   (faster-whisper, on-device — real audio/
-   │                              video file upload, no API key, ffmpeg
-   │                              extracts audio from video)
+   ├─ GroqWhisperTranscriber    (Groq's hosted Whisper API — real audio/
+   │                              video file upload, needs one GROQ_API_KEY
+   │                              set by whoever deploys the app)
    └─ PassthroughTranscriber    (typed/pasted text, or the bundled example)
         │
         ▼
@@ -60,17 +60,21 @@ Gemini, a local Ollama model) later means writing one more class, not
 rewriting the app.
 
 Transcription is a separate, independent concern (`pipeline/transcribe.py`):
-audio/video files are transcribed **entirely on-device** with
-`faster-whisper`, so it needs no API key and never sends your recording
-anywhere. Typed/pasted text always works as a fallback (and is the fastest
-way to try the app).
+audio/video files are transcribed via **Groq's hosted Whisper API**. An
+earlier version ran `faster-whisper` entirely on-device, but that broke on
+Streamlit Community Cloud (a missing system OpenMP library, plus an
+unreliable first-use model download on the free tier — see
+`docs/PROCESS.md`), so it was replaced with one hosted API call instead.
+The app owner sets one free `GROQ_API_KEY` (console.groq.com/keys) as a
+Streamlit Cloud secret or environment variable; visitors don't need their
+own. Typed/pasted text always works as a fallback (and is the fastest way
+to try the app) and needs no key at all.
 
 ## Running it locally
 
 ```bash
 pip install -r requirements.txt
-# ffmpeg is needed only for transcribing video files:
-#   apt install ffmpeg   (or) brew install ffmpeg
+export GROQ_API_KEY=gsk_...   # free key from console.groq.com/keys, needed only for audio/video transcription
 streamlit run app.py
 ```
 
@@ -115,13 +119,22 @@ which runs a Streamlit app straight from a public GitHub repo at no cost:
    GitHub.
 3. Click **New app**, pick this repository and branch, and set the main
    file path to `app.py`.
-4. Click **Deploy**. `packages.txt` (`ffmpeg`) and `requirements.txt` are
-   picked up automatically.
+4. Click **Deploy**. `requirements.txt` is picked up automatically.
+5. Under the app's **Settings → Secrets**, add:
+   ```toml
+   GROQ_API_KEY = "gsk_..."
+   ```
+   (free at [console.groq.com/keys](https://console.groq.com/keys)) so the
+   Record/Upload tabs can transcribe audio. Without it, those tabs still
+   work but show a clear error asking for the key — Paste text always works
+   regardless.
 
 Each visitor pastes in their **own** free OpenRouter key in the sidebar —
 it's kept only in their browser session, never logged or written to disk —
 so whoever deploys this doesn't get stuck paying for everyone else's usage.
-Visitors who don't want to get a key at all can just use **Demo mode**.
+Visitors who don't want to get a key at all can just use **Demo mode**. The
+Groq key is different: it's the *deployer's* key, set once, used for every
+visitor's transcription (Groq's free tier is generous enough for this).
 
 ### Making the deployed app look polished (a few manual, one-time steps)
 
@@ -170,9 +183,9 @@ only the repo/deploy owner can make — nothing here needs code:
 - Free-tier model quality and rate limits vary and change over time; if a
   run fails or produces poor output, try Demo mode to confirm the pipeline
   itself is working, or try a different free model id.
-- `faster-whisper` downloads its model on first use and needs `ffmpeg` on
-  PATH for video files; if either is unavailable, paste the transcript as
-  text instead — it always works.
+- Audio/video transcription needs a `GROQ_API_KEY` configured by the
+  deployer and outbound internet access to Groq; if either is unavailable,
+  paste the transcript as text instead — it always works.
 
 ## Project layout
 
@@ -180,7 +193,7 @@ only the repo/deploy owner can make — nothing here needs code:
 pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider, MockLLMProvider
-  transcribe.py    Transcriber (ABC), LocalWhisperTranscriber, PassthroughTranscriber
+  transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
   schema.py        ProjectBrief, Requirements, ArchitectureDoc, QAReport, PipelineResult
   agents.py        Agent (ABC) + the 5 SDLC personas
   orchestrator.py  Orchestrator — runs the pipeline incl. the QA/Dev loop

@@ -56,11 +56,20 @@ taste:
    config value instead of a hardcoded assumption.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
-   transcribe a recording. Rather than reach for a paid ASR API, I moved
-   transcription to `faster-whisper` running locally: free, offline, needs
-   no key, and — as a side effect of being a real backend instead of a
-   static page — it can handle genuine audio/video file uploads, which the
-   Artifact path couldn't.
+   transcribe a recording. I first moved transcription to `faster-whisper`
+   running locally: free, offline, needs no key, and — as a side effect of
+   being a real backend instead of a static page — it can handle genuine
+   audio/video file uploads, which the Artifact path couldn't. **Update:**
+   this broke on Streamlit Community Cloud (its base image is missing the
+   OpenMP system library `ctranslate2` needs, and the free tier's
+   resources/network don't reliably support the first-use Hugging Face
+   model download either), and by the time I could verify that against
+   real deployment logs, the deployed branch had also drifted from the one
+   I'd patched — so I replaced local Whisper with one call to Groq's
+   hosted Whisper API instead. It costs the "entirely on-device" property
+   and needs one `GROQ_API_KEY` (the deployer's, not each visitor's), but
+   sidesteps the system-dependency and resource-limit problems entirely,
+   which matters more for a Cloud deployment meant to just work.
 6. **One key, not several.** Since transcription never leaves the machine
    and every agent goes through the same OpenRouter gateway, the whole app
    needs exactly one external API key, used uniformly — not a different key
@@ -124,9 +133,13 @@ field value contains `<`.
   accessible AI tools, and the user I built this with prioritized
   zero-cost, swappable models over guaranteed quality. The `LLMProvider`
   seam means a paid backend is a one-class addition later, not a rewrite.
-- **Local Whisper over a cloud transcription API**: slower on first run
-  (model download, CPU inference) but genuinely free, keyless, and keeps
-  a user's recording on their own machine.
+- **A hosted transcription API (Groq) over local Whisper**: costs one API
+  key (the deployer's) and sends the recording off-machine, in exchange for
+  working reliably on a constrained, shared hosting environment. Local
+  Whisper's "genuinely free, keyless, on-device" properties were real
+  advantages for a laptop or a fully-controlled server; on Streamlit
+  Community Cloud's free tier they weren't worth the missing system
+  libraries and unreliable first-use download that came with them.
 - **One primary entity per prototype**: a real app usually has several
   related entities. I scoped the Developer/QA agents to one primary entity
   deliberately — this is a rapid-prototyping tool for validating an idea
@@ -208,6 +221,40 @@ network call this environment won't allow). Streamlit Community Cloud has
 normal outbound internet access, so the actual model download should work
 fine there; that's the one part of this project I can't verify from inside
 this sandbox and said so plainly rather than claiming a live run.
+
+## Round four: the Cloud deployment actually failed, and why
+
+The optimistic close of round three ("should work fine there") turned out
+to be wrong, or at least unconfirmed — the user reported recording and
+transcription still not working on the live Streamlit Cloud app. Two things
+came out of actually chasing that down instead of re-guessing:
+
+First, a fake-microphone Playwright test (Chromium's
+`--use-file-for-fake-audio-capture`, fed a real espeak-ng-synthesized
+recording) against a locally-run copy of the app showed that recording
+itself works correctly — the widget captures real audio, `Generate` becomes
+enabled, and the pipeline reaches the transcription call. The failure was
+always one step later, at Whisper model load, exactly matching the
+sandbox's own `huggingface.co` block — the same failure mode, different
+cause. This mattered because it ruled out "the recording UI is broken" and
+pointed squarely at the local-Whisper dependency chain instead.
+
+Second, the user's actual Streamlit Cloud build log revealed the deployed
+app was running a different branch than the one already patched for the
+`libgomp1`/error-handling fix — so that fix had never shipped. The log also
+only covered the build/startup phase; the app's own error handling catches
+transcription failures and shows them in the browser without ever writing
+to the server log, so the log couldn't show the live failure either way.
+
+Given a system-library dependency (`libgomp1`), a first-use network
+download, and a resource-constrained free tier all had to line up correctly
+for local Whisper to work at all — and a branch mismatch had already
+undone one fix once — the more robust move was removing that whole
+dependency chain rather than continuing to patch it. `GroqWhisperTranscriber`
+replaced `LocalWhisperTranscriber`: one hosted HTTP call, no local model, no
+ffmpeg, no first-use download. It trades "genuinely on-device" for "one API
+key the deployer sets once," which is a better trade for a shared Cloud
+deployment than for a personal machine.
 
 **Adding a "Test connection" button** for the OpenRouter key turned up a
 second real bug the same way the UI-polish round did: the handler called

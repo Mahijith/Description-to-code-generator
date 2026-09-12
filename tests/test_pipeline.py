@@ -1,7 +1,3 @@
-import re
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +7,7 @@ from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent,
 from pipeline.llm import MockLLMProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets
-from pipeline.transcribe import LocalWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
+from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
 SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
 
@@ -61,10 +57,8 @@ def test_passthrough_transcriber_reads_text_file(tmp_path):
 
 
 def test_make_transcriber_for_picks_passthrough_for_text():
-    from pipeline.transcribe import LocalWhisperTranscriber
-
     assert isinstance(make_transcriber_for("foo.txt"), PassthroughTranscriber)
-    assert isinstance(make_transcriber_for("foo.mp3"), LocalWhisperTranscriber)
+    assert isinstance(make_transcriber_for("foo.mp3"), GroqWhisperTranscriber)
 
 
 def test_pm_kickoff_produces_a_brief():
@@ -132,55 +126,34 @@ def test_orchestrator_runs_full_loop_and_ends_passed():
     assert [p["stage"] for p in result.prompt_log][:3] == ["pm_kickoff", "requirements", "architect"]
 
 
-def test_local_whisper_transcriber_joins_segments_and_cleans_up_temp_files(tmp_path):
-    """The real faster-whisper model needs a network call to download its
-    weights, which isn't something a unit test should depend on — so the
-    model itself is mocked here. What's under real test is everything
-    around it: joining segment text, and (for video input) invoking ffmpeg
-    to extract the audio track and cleaning up the temp .wav afterwards.
-    """
-    transcriber = LocalWhisperTranscriber(model_size="tiny")
-    fake_segments = [MagicMock(text=" Hello world."), MagicMock(text=" This is a test.")]
-    fake_model = MagicMock()
-    fake_model.transcribe.return_value = (fake_segments, {"language": "en"})
-
+def test_groq_transcriber_returns_text_on_success(tmp_path):
     audio_path = tmp_path / "in.wav"
-    audio_path.write_bytes(b"RIFF....WAVEfmt ")  # never actually decoded; the model is mocked
-    with patch.object(transcriber, "_get_model", return_value=fake_model):
-        assert transcriber.transcribe(audio_path) == "Hello world. This is a test."
+    audio_path.write_bytes(b"RIFF....WAVEfmt ")  # never actually decoded; the HTTP call is mocked
 
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        pytest.skip("ffmpeg not installed in this environment")
-
-    video_path = tmp_path / "in.mp4"
-    subprocess.run(
-        [
-            ffmpeg, "-y",
-            "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
-            "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
-            "-shortest", "-c:v", "libx264", "-c:a", "aac", str(video_path),
-        ],
-        check=True, capture_output=True,
-    )
-    before = set(Path(tempfile.gettempdir()).glob("*.wav"))
-    with patch.object(transcriber, "_get_model", return_value=fake_model):
-        assert transcriber.transcribe(video_path) == "Hello world. This is a test."
-    after = set(Path(tempfile.gettempdir()).glob("*.wav"))
-    assert after == before, "temp .wav extracted from the video was not cleaned up"
+    transcriber = GroqWhisperTranscriber(api_key="test-key")
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {"text": "  Hello world.  "}
+    with patch("requests.post", return_value=fake_response) as mock_post:
+        assert transcriber.transcribe(audio_path) == "Hello world."
+    assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
 
 
-def test_local_whisper_wraps_model_load_failures_as_transcription_error():
-    """A blocked network, a Hugging Face outage, or a bad proxy all surface as
-    some arbitrary exception several frames deep inside WhisperModel's
-    constructor (httpx/huggingface_hub). Without wrapping it, that crashes
-    the whole request instead of showing the user something actionable —
-    this is the bug found by testing the real audio path end to end.
-    """
-    transcriber = LocalWhisperTranscriber(model_size="tiny")
-    with patch("faster_whisper.WhisperModel", side_effect=RuntimeError("403 Forbidden")):
-        with pytest.raises(TranscriptionError, match="Couldn't load the speech-to-text model"):
-            transcriber._get_model()
+def test_groq_transcriber_requires_an_api_key(tmp_path):
+    audio_path = tmp_path / "in.wav"
+    audio_path.write_bytes(b"RIFF....WAVEfmt ")
+    transcriber = GroqWhisperTranscriber(api_key="")
+    with pytest.raises(TranscriptionError, match="No Groq API key configured"):
+        transcriber.transcribe(audio_path)
+
+
+def test_groq_transcriber_wraps_http_errors_as_transcription_error(tmp_path):
+    audio_path = tmp_path / "in.wav"
+    audio_path.write_bytes(b"RIFF....WAVEfmt ")
+    transcriber = GroqWhisperTranscriber(api_key="test-key")
+    fake_response = MagicMock(status_code=401, text="Invalid API Key")
+    with patch("requests.post", return_value=fake_response):
+        with pytest.raises(TranscriptionError, match="401"):
+            transcriber.transcribe(audio_path)
 
 
 def test_orchestrator_respects_max_iterations_even_if_never_passes():

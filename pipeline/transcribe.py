@@ -3,21 +3,29 @@
 Two interchangeable implementations behind one interface:
 - PassthroughTranscriber: the input already IS text (typed, pasted, or a
   .txt/.md file). Always available, needs nothing.
-- LocalWhisperTranscriber: real audio/video file upload, transcribed
-  entirely on-device via faster-whisper — free, offline, no API key,
-  because it never leaves the machine running the app.
+- GroqWhisperTranscriber: real audio/video file upload, transcribed via
+  Groq's hosted Whisper API. Needs one GROQ_API_KEY and outbound internet
+  access, but no local model download and no ffmpeg — Groq decodes the
+  file server-side, which is why this handles video containers directly
+  too. Local, on-device transcription (faster-whisper) was tried first but
+  dropped: on Streamlit Community Cloud it needs a system OpenMP library
+  the base image doesn't ship, plus a first-use Hugging Face download the
+  free tier's resources and network don't reliably support — see
+  docs/PROCESS.md.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+import requests
+
 TEXT_EXTENSIONS = {".txt", ".md"}
+
+GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+DEFAULT_GROQ_MODEL = "whisper-large-v3-turbo"
 
 
 class TranscriptionError(RuntimeError):
@@ -41,104 +49,54 @@ class PassthroughTranscriber(Transcriber):
         return text.strip()
 
 
-class LocalWhisperTranscriber(Transcriber):
-    """Runs faster-whisper on-device. No API key, no network call.
-
-    Requires the optional `faster-whisper` dependency and, for video
-    files, `ffmpeg` on PATH to extract the audio track first.
+class GroqWhisperTranscriber(Transcriber):
+    """Sends the audio/video file to Groq's hosted, OpenAI-compatible
+    Whisper endpoint. Free tier at console.groq.com/keys.
     """
 
-    def __init__(self, model_size: str | None = None, download_root: str | None = None):
-        # Allow an operator to downgrade the model (e.g. to "tiny") on a
-        # memory-constrained deployment without a code change, via env var.
-        self._model_size = model_size or os.environ.get("WHISPER_MODEL_SIZE", "base")
-        # Explicit, always-writable cache dir for the Hugging Face download.
-        # The huggingface_hub default (~/.cache/huggingface) depends on a
-        # writable, persistent HOME, which some hosted environments don't
-        # reliably provide — pointing at the system temp dir sidesteps that.
-        self._download_root = download_root or os.path.join(tempfile.gettempdir(), "whisper-models")
-        self._model = None  # lazy: only download/load if actually used
-
-    def _get_model(self):
-        if self._model is None:
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError as exc:
-                raise TranscriptionError(
-                    "faster-whisper is not installed. Install it, or paste the "
-                    "transcript as text instead."
-                ) from exc
-            try:
-                os.makedirs(self._download_root, exist_ok=True)
-                self._model = WhisperModel(
-                    self._model_size,
-                    device="cpu",
-                    compute_type="int8",
-                    download_root=self._download_root,
-                )
-            except Exception as exc:
-                # First use downloads the model from Hugging Face Hub — this is
-                # where a blocked/unreliable network, a proxy, a Hub outage, or
-                # a missing system shared library (e.g. libgomp1, required by
-                # ctranslate2 on minimal Linux containers) surfaces. Without
-                # this, the raw exception (often several frames deep in
-                # httpx/huggingface_hub/ctranslate2) crashes the whole request
-                # instead of showing a clear, actionable message.
-                raise TranscriptionError(
-                    "Couldn't load the speech-to-text model. This usually means "
-                    "either outbound internet access is blocked (the model "
-                    "downloads from Hugging Face on first use) or a required "
-                    f"system library is missing. Underlying error: {exc}. Paste "
-                    "the transcript as text instead, or check the network/"
-                    "system packages available to this app."
-                ) from exc
-        return self._model
+    def __init__(self, api_key: str | None = None, model: str | None = None, timeout: int = 120):
+        self._api_key = (api_key or os.environ.get("GROQ_API_KEY") or "").strip()
+        self._model = model or os.environ.get("GROQ_WHISPER_MODEL", DEFAULT_GROQ_MODEL)
+        self._timeout = timeout
 
     def transcribe(self, path: str | Path) -> str:
+        if not self._api_key:
+            raise TranscriptionError(
+                "No Groq API key configured. Set the GROQ_API_KEY environment "
+                "variable — on Streamlit Cloud, add it under the app's "
+                "Settings -> Secrets — to a free key from "
+                "console.groq.com/keys. Paste the description as text instead "
+                "in the meantime."
+            )
         path = Path(path)
-        audio_path = path
-        temp_audio = None
         try:
-            if path.suffix.lower() in VIDEO_EXTENSIONS:
-                fd, temp_audio_name = tempfile.mkstemp(suffix=".wav")
-                os.close(fd)
-                temp_audio = Path(temp_audio_name)
-                _extract_audio(path, temp_audio)
-                audio_path = temp_audio
+            with open(path, "rb") as f:
+                resp = requests.post(
+                    GROQ_TRANSCRIPTION_URL,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    files={"file": (path.name, f)},
+                    data={"model": self._model, "response_format": "json"},
+                    timeout=self._timeout,
+                )
+        except requests.RequestException as exc:
+            raise TranscriptionError(f"Request to Groq failed: {exc}") from None
 
-            model = self._get_model()
-            try:
-                segments, _info = model.transcribe(str(audio_path))
-                return " ".join(segment.text.strip() for segment in segments).strip()
-            except TranscriptionError:
-                raise
-            except Exception as exc:
-                # A file the model can't decode (corrupt upload, an
-                # unsupported/mismatched container) surfaces here as some
-                # arbitrary PyAV/ctranslate2 exception — wrap it so the user
-                # sees an actionable message instead of a crash.
-                raise TranscriptionError(
-                    f"Couldn't transcribe the audio: {exc}. The file may be "
-                    "corrupt, empty, or in a format that couldn't be decoded — "
-                    "try recording/uploading again, or paste the description "
-                    "as text instead."
-                ) from exc
-        finally:
-            if temp_audio is not None and temp_audio.exists():
-                temp_audio.unlink()
+        if resp.status_code == 401:
+            raise TranscriptionError("Groq rejected the API key (401 Unauthorized). Check GROQ_API_KEY.")
+        if resp.status_code == 413:
+            raise TranscriptionError(
+                "The recording is too large for Groq's free tier (25MB limit). Try a shorter recording."
+            )
+        if resp.status_code == 429:
+            raise TranscriptionError("Groq rate-limited this request (429) — wait a bit and try again.")
+        if resp.status_code >= 400:
+            raise TranscriptionError(f"Groq returned {resp.status_code}: {resp.text[:300]}")
 
-
-def _extract_audio(video_path: Path, out_wav_path: Path) -> None:
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000", str(out_wav_path)],
-            check=True,
-            capture_output=True,
-        )
-    except FileNotFoundError as exc:
-        raise TranscriptionError("ffmpeg is not installed; cannot extract audio from video") from exc
-    except subprocess.CalledProcessError as exc:
-        raise TranscriptionError(f"ffmpeg failed to extract audio: {exc.stderr.decode(errors='replace')[:300]}") from exc
+        try:
+            data = resp.json()
+            return data["text"].strip()
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TranscriptionError(f"Unexpected response from Groq: {resp.text[:300]}") from exc
 
 
 def make_transcriber_for(path: str | Path) -> Transcriber:
@@ -146,4 +104,4 @@ def make_transcriber_for(path: str | Path) -> Transcriber:
     suffix = Path(path).suffix.lower()
     if suffix in TEXT_EXTENSIONS:
         return PassthroughTranscriber()
-    return LocalWhisperTranscriber()
+    return GroqWhisperTranscriber()

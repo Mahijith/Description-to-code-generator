@@ -4,6 +4,7 @@ run stage by stage, preview and download the generated prototype.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -15,6 +16,20 @@ from pipeline.secrets import Secrets
 from pipeline.transcribe import PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
 st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
+
+# Bridges the deployer's Streamlit Cloud secret into the plain env-var
+# convention pipeline/transcribe.py and cli.py both use, so transcription
+# stays Streamlit-agnostic and works identically from the CLI. st.secrets
+# raises (rather than behaving like an empty dict) when no secrets.toml
+# exists at all, e.g. a fresh deployment with no secrets configured yet —
+# that's not an error here, it just means GROQ_API_KEY isn't set.
+if "GROQ_API_KEY" not in os.environ:
+    try:
+        _groq_key = st.secrets.get("GROQ_API_KEY")
+    except Exception:
+        _groq_key = None
+    if _groq_key:
+        os.environ["GROQ_API_KEY"] = _groq_key
 
 
 def _friendly_llm_error(exc: LLMError) -> str:
@@ -134,7 +149,7 @@ with st.sidebar:
         if st.session_state.get("connection_ok") is False and "connection_error" in st.session_state:
             st.error(st.session_state["connection_error"])
 
-        st.caption("One OpenRouter key powers every agent below. Transcription runs locally and needs no key.")
+        st.caption("One OpenRouter key powers every agent below. Transcription uses a Groq API key configured by whoever deployed this app.")
 
     with st.expander("How it works"):
         st.markdown(
@@ -278,7 +293,7 @@ if generate:
         st.stop()
 
     kind, payload = transcript_source
-    status_label = "Transcribing..." if kind == "text" else "Transcribing (first use downloads the speech model — can take a minute)..."
+    status_label = "Transcribing..." if kind == "text" else "Transcribing via Groq..."
     with st.status(status_label, expanded=False) as status:
         try:
             if kind == "text":
@@ -366,6 +381,6 @@ if "result" in st.session_state:
 
 st.divider()
 st.caption(
-    "Built as a multi-agent SDLC pipeline — no Claude, one free OpenRouter key, local Whisper "
+    "Built as a multi-agent SDLC pipeline — no Claude, one free OpenRouter key, Groq-hosted Whisper "
     "transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
 )
