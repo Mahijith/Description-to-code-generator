@@ -72,7 +72,17 @@ taste:
    blocked throughout this project), so all were taken as given rather than
    checked. The common symptom across every one of them ("stopping mid
    process") turned out not to be about which model was picked at all — see
-   round six.
+   round six. **Update:** after round six's fix (an explicit
+   `MAX_OUTPUT_TOKENS`, raised again from 8000 to 16000, plus a clear error
+   instead of silent truncation) still hit the same free-tier output cap on
+   Nemotron-super, the deployer switched `DEFAULT_MODEL` a fifth time —
+   back to the original `inclusionai/ling-3.0-flash-vl:free` from item 4
+   above. I flagged plainly that this reverts to a model this project
+   originally moved away from for not being coding-focused (see point 5
+   below), which is an orthogonal concern to output length — a model can
+   be bad at coding and still never truncate, or good at coding and still
+   hit a small free-tier cap. Still the deployer's call to make; I
+   implemented it as asked.
 5. **Transcription backend.** "VL" in a model name means Vision-Language
    (text + images), not audio — so the free chat model above can't
    transcribe a recording. I first moved transcription to `faster-whisper`

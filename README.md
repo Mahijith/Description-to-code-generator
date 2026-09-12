@@ -51,8 +51,10 @@ Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. The default implementation is **`OpenRouterProvider`**,
 which talks to [OpenRouter](https://openrouter.ai)'s free-tier models
-(default: `nvidia/nemotron-3-super-120b-a12b:free`, picked for coding
-ability — the Developer agent is writing actual HTML/CSS/JS). **No Claude
+(default: `inclusionai/ling-3.0-flash-vl:free` — a deployer choice; see
+`docs/PROCESS.md` for the back-and-forth on picking a free model that
+reliably finishes the Developer stage's HTML/CSS/JS output without hitting
+a free-tier output-length cap). **No Claude
 is used anywhere in this app** — that was a deliberate choice to run on
 free models. Because OpenRouter is one gateway, **a single API key powers
 every agent**; there is no per-agent or per-stage key. The app owner sets
@@ -193,7 +195,7 @@ only the repo/deploy owner can make — nothing here needs code:
   deployer and outbound internet access to Groq; if either is unavailable,
   paste the transcript as text instead — it always works and needs no key.
 - Every OpenRouter request asks for `MAX_OUTPUT_TOKENS` (`pipeline/llm.py`,
-  currently 8000) tokens back, and a reply that still gets cut off (a
+  currently 16000) tokens back, and a reply that still gets cut off (a
   model's own free-tier cap can be smaller) raises a clear error rather
   than silently handing a truncated HTML file to QA — but a model with a
   genuinely small output window will keep hitting that ceiling on the

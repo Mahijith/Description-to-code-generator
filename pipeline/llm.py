@@ -18,11 +18,10 @@ import requests
 
 from pipeline.secrets import Secrets, mask_key
 
-# Deployer's choice, picked for coding ability (the Developer agent writes
-# the actual prototype HTML/CSS/JS). Free-tier model on OpenRouter — swap
-# this one constant to change it; every agent shares it, there's no
-# per-agent override.
-DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+# Deployer's choice — see docs/PROCESS.md for the full back-and-forth on
+# picking one. Free-tier model on OpenRouter; swap this one constant to
+# change it, since every agent shares it and there's no per-agent override.
+DEFAULT_MODEL = "inclusionai/ling-3.0-flash-vl:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Without an explicit cap, some free-tier models fall back to a small
@@ -31,7 +30,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # error, just an incomplete Developer-stage output. This doesn't force a
 # model to use all of it; it just stops our own code from being the
 # limiting factor.
-MAX_OUTPUT_TOKENS = 8000
+MAX_OUTPUT_TOKENS = 16000
 
 
 class LLMError(RuntimeError):
