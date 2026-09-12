@@ -132,6 +132,15 @@ class OpenRouterProvider(LLMProvider):
             raise LLMError(f"OpenRouter returned {resp.status_code}: {resp.text[:300]}")
 
         data = resp.json()
+        if isinstance(data, dict) and "error" in data:
+            # OpenRouter can return HTTP 200 with an error object embedded in
+            # the body — e.g. proxying an upstream provider outage — so this
+            # has to be checked regardless of resp.status_code, or it falls
+            # through to the generic "unexpected shape" branch below with no
+            # indication anything upstream actually failed.
+            error = data["error"]
+            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+            raise LLMError(f"OpenRouter upstream error: {message}")
         try:
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:

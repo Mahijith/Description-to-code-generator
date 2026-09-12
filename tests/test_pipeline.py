@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
-from pipeline.llm import MockLLMProvider
+from pipeline.llm import LLMError, MockLLMProvider, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
@@ -53,7 +53,7 @@ def test_test_connection_succeeds_on_a_working_provider():
 
 
 def test_test_connection_propagates_llm_error():
-    from pipeline.llm import LLMError, LLMProvider
+    from pipeline.llm import LLMProvider
 
     class BrokenProvider(LLMProvider):
         def complete(self, prompt):
@@ -61,6 +61,28 @@ def test_test_connection_propagates_llm_error():
 
     with pytest.raises(LLMError, match="401"):
         BrokenProvider().test_connection()
+
+
+def test_openrouter_provider_surfaces_embedded_error_object_even_on_http_200():
+    """OpenRouter can return HTTP 200 with an `error` key in the JSON body
+    instead of a real completion — e.g. proxying an upstream provider
+    outage (this exact case: Nvidia's Nemotron backend briefly overloaded).
+    Without checking for this, it fell through to a generic "unexpected
+    response shape" message with no indication anything upstream failed.
+    """
+    provider = OpenRouterProvider(Secrets("sk-test"), model="nvidia/nemotron-3-ultra-550b-a55b:free")
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "id": "gen-1789245235-4RT7cCsJAHPvIUIOWjNV",
+        "error": {
+            "message": "Upstream error from Nvidia: Service temporarily overloaded",
+            "code": 502,
+            "metadata": {"error_type": "provider_unavailable"},
+        },
+    }
+    with patch("requests.post", return_value=fake_response):
+        with pytest.raises(LLMError, match="Service temporarily overloaded"):
+            provider.complete("hello")
 
 
 def test_passthrough_transcriber_reads_text_file(tmp_path):
