@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import requests
 
-from pipeline.secrets import Secrets
+from pipeline.secrets import Secrets, mask_key
 
 # Picked for coding ability specifically (the Developer agent writes the
 # actual prototype HTML/CSS/JS) rather than the original vision-language
@@ -117,7 +118,14 @@ class OpenRouterProvider(LLMProvider):
             raise LLMError(f"Request to OpenRouter failed: {exc}") from None
 
         if resp.status_code == 401:
-            raise LLMError("OpenRouter rejected the API key (401 Unauthorized)")
+            # Printed to the server log (stderr), never to the browser — the
+            # masked key/length is enough to spot a stale, truncated, or
+            # wrong-key configuration mistake without exposing the key.
+            print(
+                f"[llm] OpenRouter 401 with OPENROUTER_API_KEY={mask_key(self._secrets.reveal_openrouter_key())}",
+                file=sys.stderr,
+            )
+            raise LLMError(f"OpenRouter rejected the API key (401 Unauthorized): {resp.text[:200]}")
         if resp.status_code == 429:
             raise LLMError("OpenRouter rate-limited this request (429) — try again shortly")
         if resp.status_code >= 400:

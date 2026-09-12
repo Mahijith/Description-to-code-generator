@@ -9,6 +9,20 @@ widgets — only ever sees the masked form.
 from __future__ import annotations
 
 
+def mask_key(key: str | None) -> str:
+    """Shows just enough of a key (first/last 4 chars, and length) to tell
+    two keys apart, or spot a copy-paste mistake (truncated, wrong key
+    entirely, stray whitespace/quotes) — without ever revealing the key
+    itself. Safe for server logs; still not for a public-facing UI.
+    """
+    if not key:
+        return "<no key>"
+    length = len(key)
+    if length <= 8:
+        return f"{'*' * length} (len {length})"
+    return f"{key[:4]}...{key[-4:]} (len {length})"
+
+
 class Secrets:
     """Holds one API key. Never prints, logs, or serializes the raw value."""
 
@@ -25,15 +39,7 @@ class Secrets:
             raise ValueError("No OpenRouter API key configured")
         return self._openrouter_api_key
 
-    def _masked(self) -> str:
-        key = self._openrouter_api_key
-        if not key:
-            return "<no key>"
-        if len(key) <= 8:
-            return "*" * len(key)
-        return f"{key[:4]}...{key[-4:]}"
-
     def __repr__(self) -> str:  # never leak the raw key via repr/logging
-        return f"Secrets(openrouter_api_key={self._masked()!r})"
+        return f"Secrets(openrouter_api_key={mask_key(self._openrouter_api_key)!r})"
 
     __str__ = __repr__

@@ -6,7 +6,7 @@ import pytest
 from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
 from pipeline.llm import MockLLMProvider
 from pipeline.orchestrator import Orchestrator
-from pipeline.secrets import Secrets
+from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
 SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
@@ -22,6 +22,19 @@ def test_secrets_never_exposes_raw_key_via_repr_or_str():
 def test_secrets_masks_short_keys_safely():
     secrets = Secrets("short")
     assert "short" not in repr(secrets)
+
+
+def test_mask_key_never_exposes_the_raw_value_but_shows_length_and_ends():
+    masked = mask_key("gsk_abcdefghijklmnopqrstuvwxyz")
+    assert "abcdefghijklmnopqrstuvwxyz" not in masked
+    assert masked.startswith("gsk_")
+    assert masked.endswith("wxyz (len 30)")
+
+
+def test_mask_key_handles_empty_and_short_keys():
+    assert mask_key(None) == "<no key>"
+    assert mask_key("") == "<no key>"
+    assert "short" not in mask_key("short")
 
 
 def test_secrets_reports_no_key():

@@ -17,10 +17,13 @@ Two interchangeable implementations behind one interface:
 from __future__ import annotations
 
 import os
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import requests
+
+from pipeline.secrets import mask_key
 
 TEXT_EXTENSIONS = {".txt", ".md"}
 
@@ -82,7 +85,13 @@ class GroqWhisperTranscriber(Transcriber):
             raise TranscriptionError(f"Request to Groq failed: {exc}") from None
 
         if resp.status_code == 401:
-            raise TranscriptionError("Groq rejected the API key (401 Unauthorized). Check GROQ_API_KEY.")
+            # Printed to the server log (stderr), never to the browser — the
+            # masked key/length is enough to spot a stale, truncated, or
+            # wrong-key configuration mistake without exposing the key.
+            print(f"[transcribe] Groq 401 with GROQ_API_KEY={mask_key(self._api_key)}", file=sys.stderr)
+            raise TranscriptionError(
+                f"Groq rejected the API key (401 Unauthorized): {resp.text[:200]}. Check GROQ_API_KEY."
+            )
         if resp.status_code == 413:
             raise TranscriptionError(
                 "The recording is too large for Groq's free tier (25MB limit). Try a shorter recording."
