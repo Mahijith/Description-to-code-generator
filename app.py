@@ -213,8 +213,17 @@ generate = st.button("Generate", type="primary", disabled=transcript_source is N
 
 
 def _run_pipeline(transcript: str) -> None:
-    llm = MockLLMProvider() if demo_mode else OpenRouterProvider(Secrets(api_key), model=model_id)
-    orchestrator = Orchestrator(llm)
+    if not demo_mode and not api_key:
+        # Guards the "Regenerate" path too: it calls _run_pipeline directly,
+        # bypassing the same check that gates the initial "Generate" click.
+        st.error("Enter an OpenRouter API key in the sidebar, or turn on Demo mode.")
+        return
+    try:
+        llm = MockLLMProvider() if demo_mode else OpenRouterProvider(Secrets(api_key), model=model_id)
+        orchestrator = Orchestrator(llm)
+    except LLMError as exc:
+        st.error(_friendly_llm_error(exc))
+        return
 
     tracker_box = st.empty()
     progress: dict[str, str] = {}
@@ -287,8 +296,11 @@ if generate:
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                     tmp.write(audio_bytes)
                     tmp_path = tmp.name
-                transcriber = make_transcriber_for(tmp_path)
-                transcript = transcriber.transcribe(tmp_path)
+                try:
+                    transcriber = make_transcriber_for(tmp_path)
+                    transcript = transcriber.transcribe(tmp_path)
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
                 if not transcript.strip():
                     raise TranscriptionError(
                         "Transcription produced no text. The recording may be silent — "
