@@ -194,14 +194,15 @@ only the repo/deploy owner can make — nothing here needs code:
 - Audio/video transcription needs a `GROQ_API_KEY` configured by the
   deployer and outbound internet access to Groq; if either is unavailable,
   paste the transcript as text instead — it always works and needs no key.
-- Every OpenRouter request asks for `MAX_OUTPUT_TOKENS` (`pipeline/llm.py`,
-  currently 32000) tokens back, and a reply that still gets cut off (a
-  model's own free-tier cap can be smaller) raises a clear error rather
-  than silently handing a truncated HTML file to QA — but a model with a
-  genuinely small output window will keep hitting that ceiling on the
-  Developer stage specifically, since it writes the largest output of any
-  agent. If that happens repeatedly, try a model with a larger context
-  window rather than assuming it's a bug.
+- This app sends no `max_tokens`/output cap of its own on OpenRouter
+  requests — deliberate, per the deployer. If a model's reply still gets
+  cut off (`finish_reason: "length"`, meaning the model or provider hit
+  *its own* limit), that raises a clear error naming how many tokens the
+  model actually produced, rather than silently handing a truncated HTML
+  file to QA. The Developer stage is most exposed to this since it writes
+  the largest output of any agent; a model that doesn't converge on a
+  single, complete file will keep hitting this regardless of any cap, ours
+  or its own.
 
 ## Project layout
 

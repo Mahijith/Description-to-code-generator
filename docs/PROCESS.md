@@ -367,6 +367,25 @@ rambles indefinitely. That would call for tightening the Developer
 prompt's constraints or picking a different model, not another token-limit
 increase.
 
+## Round eight: raising the cap was still the wrong instinct
+
+The deployer's actual ask, three times over, was to remove the app's
+output cap entirely — not to have it raised, whatever the number. Round
+seven's fix (32000 instead of 16000) technically responded to the new
+evidence but still defaulted to "pick a bigger number," which wasn't what
+was asked for and risked looking like it was quietly reinterpreting a
+direct instruction. Removed `MAX_OUTPUT_TOKENS` and the `max_tokens` field
+from the request entirely — this app now asks OpenRouter for nothing but a
+completion, full stop.
+
+The `finish_reason: "length"` check stays, deliberately: it isn't a limit,
+it's visibility into whatever limit the model or provider applies on its
+own, which exists whether or not this app sends anything. Removing that
+too would silently resurrect round six's original bug (a truncated reply
+accepted as if it were complete) — the one part of "remove limits" that
+would make failures *harder* to diagnose rather than fewer to hit, so it
+was kept and the reasoning said so plainly rather than assumed obvious.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

@@ -24,21 +24,6 @@ from pipeline.secrets import Secrets, mask_key
 DEFAULT_MODEL = "inclusionai/ling-3.0-flash-vl:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Without an explicit cap, some free-tier models fall back to a small
-# provider-side default (sometimes well under what a full self-contained
-# HTML/CSS/JS prototype needs) and silently truncate mid-response — no
-# error, just an incomplete Developer-stage output. This doesn't force a
-# model to use all of it; it just stops our own code from being the
-# limiting factor. Confirmed via the truncation error's own token count
-# (usage.completion_tokens came back exactly equal to the requested cap,
-# not some smaller provider ceiling) that this value itself was the actual
-# bottleneck for at least one model tried — raised accordingly. If a
-# future failure again shows completion_tokens landing exactly on this
-# number, that's a different problem (the model isn't converging on a
-# single, complete file) that no further increase will fix — see
-# docs/PROCESS.md round seven.
-MAX_OUTPUT_TOKENS = 32000
-
 
 class LLMError(RuntimeError):
     """Raised on any provider failure. Never carries a raw API key."""
@@ -126,7 +111,6 @@ class OpenRouterProvider(LLMProvider):
         payload = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": MAX_OUTPUT_TOKENS,
         }
         try:
             resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=self._timeout)
@@ -164,30 +148,19 @@ class OpenRouterProvider(LLMProvider):
             raise LLMError(f"Unexpected OpenRouter response shape: {data!r}") from exc
 
         if choice.get("finish_reason") == "length":
-            # The model hit MAX_OUTPUT_TOKENS (or its own smaller cap) before
-            # finishing — `content` here is a real but truncated reply, not
-            # an error, so nothing above would have caught it. Silently
-            # accepting it is exactly the "stops mid process" bug: the
-            # Developer stage would hand QA/the preview a cut-off HTML file
-            # with no indication anything went wrong.
-            #
-            # `usage.completion_tokens` is how many tokens the model actually
-            # produced before stopping — showing it (instead of just
-            # asserting "the model's cap is too small") turns this into
-            # something the reader can verify: if it's well under
-            # MAX_OUTPUT_TOKENS, the provider's own ceiling is the real
-            # limit, and no max_tokens value this app sends can raise that.
+            # This app doesn't send a max_tokens value — no cap of ours to
+            # hit — so "length" here means the model or OpenRouter itself
+            # cut the reply off at its own limit. Not raising this would
+            # silently hand a truncated reply to the caller as if it were
+            # complete; that's a real failure worth surfacing, not a
+            # restriction this app is imposing.
             usage = data.get("usage") or {}
             completion_tokens = usage.get("completion_tokens")
-            detail = (
-                f"the model produced {completion_tokens} tokens before stopping (requested up to {MAX_OUTPUT_TOKENS})"
-                if completion_tokens is not None
-                else f"requested up to {MAX_OUTPUT_TOKENS} tokens"
-            )
+            detail = f"the model produced {completion_tokens} tokens before stopping" if completion_tokens is not None else "the reply was cut off"
             raise LLMError(
-                f"OpenRouter cut the reply short with model {self._model!r}: {detail}. If that count is "
-                "well under the requested max, the model's own output cap is the real limit — no "
-                "max_tokens value can raise that. Try a shorter description, or a different model."
+                f"OpenRouter cut the reply short with model {self._model!r}: {detail}. This app sends no "
+                "token limit of its own, so the cutoff came from the model/provider's own maximum. Try "
+                "again, or switch to a different model."
             )
         return content
 

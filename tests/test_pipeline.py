@@ -85,14 +85,12 @@ def test_openrouter_provider_surfaces_embedded_error_object_even_on_http_200():
             provider.complete("hello")
 
 
-def test_openrouter_provider_requests_a_generous_max_tokens():
-    """Without an explicit max_tokens, some free-tier models fall back to a
-    small provider-side default and silently truncate their reply — no
-    error, just an incomplete Developer-stage HTML file. Regression test
-    for that: the request must always ask for a real budget.
+def test_openrouter_provider_sends_no_token_limit():
+    """This app must never impose its own max_tokens/output cap — confirmed
+    with the deployer that any such cap, however generous, could itself be
+    the reason a reply gets cut short. The request body must not contain a
+    max_tokens key at all.
     """
-    from pipeline.llm import MAX_OUTPUT_TOKENS
-
     provider = OpenRouterProvider(Secrets("sk-test"))
     fake_response = MagicMock(status_code=200)
     fake_response.json.return_value = {
@@ -100,15 +98,15 @@ def test_openrouter_provider_requests_a_generous_max_tokens():
     }
     with patch("requests.post", return_value=fake_response) as mock_post:
         provider.complete("hello")
-    assert mock_post.call_args.kwargs["json"]["max_tokens"] == MAX_OUTPUT_TOKENS
+    assert "max_tokens" not in mock_post.call_args.kwargs["json"]
 
 
 def test_openrouter_provider_raises_on_truncated_reply():
-    """A `finish_reason` of "length" means the model hit the token cap
-    mid-reply — the content is real but incomplete, and accepting it
+    """A `finish_reason` of "length" means the model or provider cut the
+    reply off at its own limit — this app sends no max_tokens of its own,
+    so there's no cap on this end to blame. Accepting the truncated content
     silently is exactly the "pipeline stops mid process" bug: a cut-off
-    HTML file with no error to explain why. Without a `usage` object in
-    the response, the message falls back to naming only the requested cap.
+    HTML file with no error to explain why.
     """
     provider = OpenRouterProvider(Secrets("sk-test"), model="some/small-model:free")
     fake_response = MagicMock(status_code=200)
@@ -122,13 +120,10 @@ def test_openrouter_provider_raises_on_truncated_reply():
 
 def test_openrouter_provider_shows_actual_completion_tokens_on_truncation():
     """When OpenRouter's response includes a `usage` object, the error
-    should show the model's *actual* completion_tokens count, not just the
-    max we requested — that's the concrete evidence needed to tell whether
-    the app's own cap or the model's own (often much smaller) free-tier cap
-    is the real limit, instead of asserting one or the other.
+    should show the model's actual completion_tokens count — real evidence
+    of how far the model got, since this app no longer sends a cap to
+    compare it against.
     """
-    from pipeline.llm import MAX_OUTPUT_TOKENS
-
     provider = OpenRouterProvider(Secrets("sk-test"), model="some/small-model:free")
     fake_response = MagicMock(status_code=200)
     fake_response.json.return_value = {
@@ -136,9 +131,8 @@ def test_openrouter_provider_shows_actual_completion_tokens_on_truncation():
         "usage": {"prompt_tokens": 900, "completion_tokens": 412, "total_tokens": 1312},
     }
     with patch("requests.post", return_value=fake_response):
-        with pytest.raises(LLMError, match="412") as exc_info:
+        with pytest.raises(LLMError, match="412"):
             provider.complete("hello")
-    assert str(MAX_OUTPUT_TOKENS) in str(exc_info.value)
 
 
 def test_passthrough_transcriber_reads_text_file(tmp_path):
