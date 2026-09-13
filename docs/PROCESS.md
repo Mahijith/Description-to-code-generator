@@ -595,6 +595,47 @@ browser-driven pass/fail signal is trustworthy, and a full orchestrator
 run using a scripted mock model proves the wiring drives a real
 browser pass end to end, not just the unit-level function in isolation.
 
+## Round thirteen: a name, and scrubbing the UI of implementation detail
+
+The deployer asked to rename the app to **ATA System** (ATA — Audio to
+Application System), with that full-name context living only here on
+GitHub — the Streamlit app itself should show just "ATA System," no
+abbreviation spelled out — and to remove any mention of API keys or which
+platforms the pipeline sources things from from the Streamlit app's UI.
+
+The rename itself was partial: I don't have a tool that can rename the
+actual GitHub repository (its slug stays `Description-to-code-generator`
+for now — no `list_*`/`create_*`/`update_*` tool in this session's GitHub
+toolset touches repository settings), so this round renamed everything
+that's actually mine to change — the README title, this file's narrative
+going forward, and the Streamlit UI's title/page title. The repo's own
+`Settings → General → Repository name` field is a one-click manual step
+the deployer still needs to do if they want the URL itself to change;
+GitHub redirects the old URL afterward, so nothing (including this
+project's own README links, still pointing at the current slug) breaks in
+the meantime.
+
+Scrubbing the UI took more than swapping the two obvious "powered by
+OpenRouter/Groq" sentences (the hero's "How it works" text and the
+footer). Both `_friendly_llm_error` and the transcription path's error
+handling had a fallback that returned the raw exception text verbatim
+when no specific branch matched — which meant an unanticipated failure
+(an upstream provider's own error body, a masked-key log line, whatever
+`AIHubMixProvider` or `GroqWhisperTranscriber` happen to say internally)
+could still leak a platform name straight to a visitor's screen despite
+every *known* case being rewritten. Fixed both fallbacks to return a
+generic, non-leaking message instead of the raw string — the actual gap,
+not just the messages I happened to already know about. Added a parallel
+`_friendly_transcription_error` (same shape as the existing
+`_friendly_llm_error`) since `GroqWhisperTranscriber` raises `Groq`-branded
+`TranscriptionError` text directly; it passes through the messages `app.py`
+already writes itself unchanged (they're already generic) and only
+rewrites ones containing "Groq" or "API key." Internal identifiers —
+env var names like `GROQ_API_KEY`, class names like `OpenRouterProvider`,
+code comments — were left alone: they're plumbing a visitor never sees,
+not "context in the app," and renaming them would be a much larger,
+unrequested refactor for no visible benefit.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

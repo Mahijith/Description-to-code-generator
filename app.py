@@ -19,7 +19,7 @@ from pipeline.transcribe import TranscriptionError, make_transcriber_for
 MAX_UPLOAD_BYTES = 19_500_000  # Groq's API stops accepting files above ~19.5MB in practice
 MIME_TYPES = {"html": "text/html", "py": "text/x-python", "js": "text/javascript"}
 
-st.set_page_config(page_title="Description → Code Generator", page_icon="assets/logo.png", layout="wide")
+st.set_page_config(page_title="ATA System", page_icon="assets/logo.png", layout="wide")
 
 
 def _bridge_secret_to_env(name: str) -> None:
@@ -46,22 +46,36 @@ _bridge_secret_to_env("OPENROUTER_API_KEY")
 
 def _friendly_llm_error(exc: LLMError) -> str:
     msg = str(exc)
-    if "No OpenRouter API key configured" in msg:
+    if "API key configured" in msg:
         return (
-            "This app isn't configured with an OpenRouter API key yet. If you're the "
-            "deployer: add OPENROUTER_API_KEY under the app's Settings → Secrets."
+            "This app isn't configured yet. If you're the deployer, please add the "
+            "required credentials under the app's Settings → Secrets."
         )
     if "401" in msg:
-        return f"This app's configured API key was rejected ({msg}). If you're the deployer: check it at openrouter.ai/keys."
+        return "This app's configured credentials were rejected. If you're the deployer, please verify them."
     if "429" in msg:
-        return "The model's provider rate-limited this app (every visitor shares one key). Wait a bit and try again."
+        return "This app is being rate-limited right now (shared usage). Wait a bit and try again."
     if "upstream error" in msg:
-        return f"The model's provider is temporarily unavailable ({msg}). This isn't a key/config problem — wait a moment and try again."
+        return "The generation service is temporarily unavailable right now. This isn't a configuration problem — wait a moment and try again."
     if "not valid JSON" in msg:
         return "The model didn't reply in the expected format. Try again."
     if "Request to" in msg and "failed" in msg:
-        return f"Couldn't reach the model's provider right now ({msg}). Try again shortly."
-    return msg
+        return "Couldn't reach the generation service right now. Try again shortly."
+    return "Something went wrong generating your app. Please try again, or contact the app owner if this keeps happening."
+
+
+def _friendly_transcription_error(exc: TranscriptionError) -> str:
+    msg = str(exc)
+    lowered = msg.lower()
+    if "groq" not in lowered and "api key" not in lowered:
+        return msg  # already a generic, platform-agnostic message we wrote ourselves
+    if "429" in msg or "rate-limited" in lowered:
+        return "This app is being rate-limited right now (shared usage). Wait a bit and try again."
+    if "too large" in lowered:
+        return "That recording is too large for this app to transcribe. Try a shorter recording, or compress the file first."
+    if "request to" in lowered and "failed" in lowered:
+        return "Couldn't reach the transcription service right now. Try again shortly."
+    return "This app isn't configured correctly right now. If you're the deployer, please check its configured credentials."
 
 # ---------------------------------------------------------------------------
 # Almost all styling (colors, fonts, borders, radii) lives in
@@ -120,7 +134,7 @@ col_logo, col_title = st.columns([1, 12], vertical_alignment="center")
 with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
-    st.title("Description → Code Generator")
+    st.title("ATA System")
     st.caption("A 6-agent SDLC pipeline turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
@@ -141,9 +155,8 @@ with st.expander("How it works"):
         "6. **Tester** — tries registration/login with a synthetic user before it ships\n\n"
         "Up to two build → review → test passes — if QA or Testing finds something on the "
         "first pass, the Developer gets one chance to fix it, then whatever's produced ships "
-        "either way. Click Regenerate for a fresh attempt any time. Powered by one shared "
-        "OpenRouter key and one shared Groq key, both configured by whoever deployed this "
-        "app — nothing to enter here."
+        "either way. Click Regenerate for a fresh attempt any time. Access is already "
+        "configured by whoever deployed this app — nothing to enter here."
     )
 
 # ---------------------------------------------------------------------------
@@ -156,7 +169,7 @@ with tab_upload:
     uploaded = st.file_uploader(
         "Audio or video file describing the app",
         type=["mp3", "wav", "m4a", "mp4", "mov", "webm"],
-        help=f"Max {MAX_UPLOAD_BYTES / 1_000_000:.1f}MB — Groq's transcription API rejects larger files.",
+        help=f"Max {MAX_UPLOAD_BYTES / 1_000_000:.1f}MB — larger files are rejected.",
     )
     if uploaded is not None:
         audio_payload = uploaded
@@ -234,7 +247,7 @@ if generate:
         st.error("Provide a description first: upload a file or record one.")
         st.stop()
 
-    with st.status("Transcribing via Groq...", expanded=False) as status:
+    with st.status("Transcribing...", expanded=False) as status:
         try:
             audio_bytes = audio_payload.getvalue()
             if len(audio_bytes) < 1000:
@@ -246,7 +259,7 @@ if generate:
             if len(audio_bytes) > MAX_UPLOAD_BYTES:
                 raise TranscriptionError(
                     f"That file is {len(audio_bytes) / 1_000_000:.1f}MB, over the "
-                    f"{MAX_UPLOAD_BYTES / 1_000_000:.1f}MB limit Groq's API accepts. Try a "
+                    f"{MAX_UPLOAD_BYTES / 1_000_000:.1f}MB limit this app accepts. Try a "
                     "shorter recording, or compress the file first."
                 )
             suffix = Path(getattr(audio_payload, "name", "recording.wav")).suffix or ".wav"
@@ -265,7 +278,7 @@ if generate:
                 )
         except TranscriptionError as exc:
             status.update(label="Transcription failed", state="error", expanded=True)
-            st.error(str(exc))
+            st.error(_friendly_transcription_error(exc))
             st.stop()
         status.update(label="Transcribed", state="complete")
 
@@ -342,6 +355,6 @@ if "result" in st.session_state:
 
 st.divider()
 st.caption(
-    "Built as a multi-agent SDLC pipeline — no Claude, powered by one shared OpenRouter key and "
-    "Groq-hosted Whisper transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
+    "Built as a multi-agent SDLC pipeline. "
+    "[Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
 )

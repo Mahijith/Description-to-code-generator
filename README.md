@@ -1,4 +1,6 @@
-# Description → Code Generator
+# ATA System
+
+**ATA — Audio to Application System.**
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue) ![Streamlit](https://img.shields.io/badge/streamlit-1.38+-ff4b4b) ![License](https://img.shields.io/badge/model%20cost-free%20tier-8b5cf6) ![Tests](https://img.shields.io/badge/tests-passing-2ea043)
 
