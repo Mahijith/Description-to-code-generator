@@ -1,15 +1,106 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
+from pipeline.agents import TesterAgent as PipelineTesterAgent
+from pipeline.auth_contract import (
+    AUTH_STATUS_ID,
+    LOGIN_PASSWORD_ID,
+    LOGIN_SUBMIT_ID,
+    LOGIN_USERNAME_ID,
+    REGISTER_PASSWORD_ID,
+    REGISTER_SUBMIT_ID,
+    REGISTER_USERNAME_ID,
+)
+from pipeline.browser_tester import run_browser_auth_test
 from pipeline.llm import AIHubMixProvider, LLMError, MockLLMProvider, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
+CORRECT_AUTH_HTML = f"""<!doctype html>
+<html><body>
+<input id="{REGISTER_USERNAME_ID}"><input id="{REGISTER_PASSWORD_ID}" type="password">
+<button id="{REGISTER_SUBMIT_ID}">Register</button>
+<input id="{LOGIN_USERNAME_ID}"><input id="{LOGIN_PASSWORD_ID}" type="password">
+<button id="{LOGIN_SUBMIT_ID}">Login</button>
+<div id="{AUTH_STATUS_ID}"></div>
+<script>
+function getUsers() {{ return JSON.parse(localStorage.getItem('users') || '{{}}'); }}
+function saveUsers(u) {{ localStorage.setItem('users', JSON.stringify(u)); }}
+document.getElementById('{REGISTER_SUBMIT_ID}').onclick = function() {{
+  var u = document.getElementById('{REGISTER_USERNAME_ID}').value;
+  var p = document.getElementById('{REGISTER_PASSWORD_ID}').value;
+  var users = getUsers();
+  if (users[u]) {{ return; }}
+  users[u] = p;
+  saveUsers(users);
+}};
+document.getElementById('{LOGIN_SUBMIT_ID}').onclick = function() {{
+  var u = document.getElementById('{LOGIN_USERNAME_ID}').value;
+  var p = document.getElementById('{LOGIN_PASSWORD_ID}').value;
+  var users = getUsers();
+  document.getElementById('{AUTH_STATUS_ID}').textContent = (users[u] === p) ? ('Logged in as ' + u) : '';
+}};
+</script>
+</body></html>"""
+
+BUGGY_AUTH_HTML = f"""<!doctype html>
+<html><body>
+<input id="{REGISTER_USERNAME_ID}"><input id="{REGISTER_PASSWORD_ID}" type="password">
+<button id="{REGISTER_SUBMIT_ID}">Register</button>
+<input id="{LOGIN_USERNAME_ID}"><input id="{LOGIN_PASSWORD_ID}" type="password">
+<button id="{LOGIN_SUBMIT_ID}">Login</button>
+<div id="{AUTH_STATUS_ID}"></div>
+<script>
+function getUsers() {{ return JSON.parse(localStorage.getItem('users') || '{{}}'); }}
+function saveUsers(u) {{ localStorage.setItem('users', JSON.stringify(u)); }}
+document.getElementById('{REGISTER_SUBMIT_ID}').onclick = function() {{
+  var u = document.getElementById('{REGISTER_USERNAME_ID}').value;
+  var p = document.getElementById('{REGISTER_PASSWORD_ID}').value;
+  var users = getUsers();
+  users[u] = p;
+  saveUsers(users);
+}};
+document.getElementById('{LOGIN_SUBMIT_ID}').onclick = function() {{
+  var u = document.getElementById('{LOGIN_USERNAME_ID}').value;
+  document.getElementById('{AUTH_STATUS_ID}').textContent = 'Logged in as ' + u;
+}};
+</script>
+</body></html>"""
+
 SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
+
+
+def _real_browser_available() -> bool:
+    """Whether a real Chromium binary can actually be launched here — not
+    just whether the `playwright` package is importable. A pip install
+    alone doesn't include the (large, separately-fetched) browser binary,
+    so tests that need real execution skip cleanly rather than fail when
+    only the package, not a usable browser, is present.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as p:
+            kwargs = {"headless": True, "args": ["--no-sandbox"]}
+            executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+            if executable_path:
+                kwargs["executable_path"] = executable_path
+            browser = p.chromium.launch(**kwargs)
+            browser.close()
+        return True
+    except Exception:
+        return False
+
+
+REAL_BROWSER_AVAILABLE = _real_browser_available()
+needs_real_browser = pytest.mark.skipif(not REAL_BROWSER_AVAILABLE, reason="no real Chromium binary available in this environment")
 
 
 def test_secrets_never_exposes_raw_key_via_repr_or_str():
@@ -283,6 +374,122 @@ def test_orchestrator_respects_max_iterations_even_if_never_passes():
     result = orchestrator.run(SAMPLE_TRANSCRIPT)
     assert result.iterations == 2
     assert result.qa_reports[-1].passed is False
+
+
+def test_developer_includes_auth_contract_when_has_auth():
+    log = []
+    architecture = _dummy_architecture()
+    architecture.has_auth = True
+    DeveloperAgent(MockLLMProvider(), log).build(_dummy_requirements(), architecture)
+    prompt = log[-1]["prompt"]
+    assert REGISTER_USERNAME_ID in prompt
+    assert LOGIN_SUBMIT_ID in prompt
+    assert AUTH_STATUS_ID in prompt
+
+
+def test_developer_omits_auth_contract_when_no_auth():
+    log = []
+    DeveloperAgent(MockLLMProvider(), log).build(_dummy_requirements(), _dummy_architecture())
+    prompt = log[-1]["prompt"]
+    assert REGISTER_USERNAME_ID not in prompt
+
+
+def test_qa_reviewer_includes_auth_addendum_when_has_auth():
+    log = []
+    architecture = _dummy_architecture()
+    architecture.has_auth = True
+    QAReviewerAgent(MockLLMProvider(), log).review(_dummy_requirements(), architecture, "<html></html>")
+    prompt = log[-1]["prompt"]
+    assert "duplicate username" in prompt.lower()
+
+
+def test_tester_agent_returns_test_report():
+    log = []
+
+    class ScriptedLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: TESTING" in prompt:
+                return {"passed": False, "notes": ["duplicate registration was silently accepted"]}
+            return super().complete_json(prompt)
+
+    report = PipelineTesterAgent(ScriptedLLM(), log).test(_dummy_requirements(), _dummy_architecture(), "print('hi')")
+    assert report.passed is False
+    assert "duplicate registration" in report.notes[0]
+    assert log[-1]["stage"] == "testing"
+
+
+@needs_real_browser
+def test_run_browser_auth_test_passes_for_correct_contract_html():
+    report = run_browser_auth_test(CORRECT_AUTH_HTML)
+    assert report.executed is True
+    assert report.passed is True
+
+
+@needs_real_browser
+def test_run_browser_auth_test_fails_when_wrong_password_is_accepted():
+    report = run_browser_auth_test(BUGGY_AUTH_HTML)
+    assert report.executed is True
+    assert report.passed is False
+    assert any("wrong password" in note.lower() for note in report.notes)
+
+
+@needs_real_browser
+def test_run_browser_auth_test_reports_missing_contract_ids():
+    report = run_browser_auth_test("<!doctype html><html><body>no auth here</body></html>")
+    assert report.executed is True
+    assert report.passed is False
+
+
+def test_run_browser_auth_test_degrades_gracefully_without_a_real_browser():
+    if REAL_BROWSER_AVAILABLE:
+        pytest.skip("a real browser is available in this environment; the degrade path isn't exercised")
+    report = run_browser_auth_test(CORRECT_AUTH_HTML)
+    assert report.executed is False
+    assert report.passed is True
+
+
+def test_orchestrator_defaults_to_two_iterations_now():
+    class AlwaysFailLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: QA" in prompt:
+                return {"passed": False, "issues": ["still broken"]}
+            return super().complete_json(prompt)
+
+    orchestrator = Orchestrator(AlwaysFailLLM())  # no max_qa_iterations kwarg — pins the new default
+    result = orchestrator.run(SAMPLE_TRANSCRIPT)
+    assert result.iterations == 2
+
+
+def test_orchestrator_skips_testing_when_no_auth():
+    orchestrator = Orchestrator(MockLLMProvider(), max_qa_iterations=2)
+    result = orchestrator.run(SAMPLE_TRANSCRIPT)
+    assert result.test_reports
+    for test_report in result.test_reports:
+        assert test_report.executed is False
+        assert test_report.passed is True
+        assert "skipped" in test_report.notes[0].lower()
+
+
+@needs_real_browser
+def test_orchestrator_runs_real_browser_test_when_html_app_has_auth():
+    class AuthAppLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            data = super().complete_json(prompt)
+            if "STAGE: ARCHITECT" in prompt:
+                data["has_auth"] = True
+            return data
+
+        def complete(self, prompt):
+            if "STAGE: DEVELOPER" in prompt and REGISTER_USERNAME_ID in prompt:
+                return CORRECT_AUTH_HTML
+            return super().complete(prompt)
+
+    orchestrator = Orchestrator(AuthAppLLM())
+    result = orchestrator.run(SAMPLE_TRANSCRIPT)
+    assert result.architecture.has_auth is True
+    last_test = result.test_reports[-1]
+    assert last_test.executed is True
+    assert last_test.passed is True
 
 
 def _dummy_requirements():

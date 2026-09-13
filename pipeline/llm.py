@@ -280,6 +280,7 @@ class MockLLMProvider(LLMProvider):
                 "style_notes": "Clean, minimal, readable at 400px width.",
                 "language": "html",
                 "file_extension": "html",
+                "has_auth": False,
             }
         if "STAGE: QA" in prompt:
             self._qa_calls += 1

@@ -115,6 +115,7 @@ class ArchitectureDoc:
     style_notes: str = ""
     language: str = "html"  # a Pygments/st.code language id, e.g. "html", "python"
     file_extension: str = "html"  # no leading dot, e.g. "html", "py"
+    has_auth: bool = False  # true when this app's concept implies user accounts
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -128,6 +129,7 @@ class ArchitectureDoc:
             style_notes=str(data.get("style_notes", "")),
             language=str(data.get("language") or "html"),
             file_extension=str(data.get("file_extension") or "html"),
+            has_auth=bool(data.get("has_auth", False)),
         )
 
 
@@ -145,12 +147,27 @@ class QAReport:
 
 
 @dataclass
+class TestReport:
+    passed: bool
+    notes: list[str] = field(default_factory=list)
+    executed: bool = False  # True when a real (e.g. browser) execution produced this, not just an LLM's say-so
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TestReport":
+        return cls(passed=bool(data.get("passed", False)), notes=list(data.get("notes", []) or []))
+
+
+@dataclass
 class PipelineResult:
     brief: ProjectBrief
     requirements: Requirements
     architecture: ArchitectureDoc
     code: str
     qa_reports: list[QAReport]
+    test_reports: list[TestReport]
     iterations: int
     summary: str
     prompt_log: list[dict]
@@ -162,6 +179,7 @@ class PipelineResult:
             "architecture": self.architecture.to_dict(),
             "code": self.code,
             "qa_reports": [q.to_dict() for q in self.qa_reports],
+            "test_reports": [t.to_dict() for t in self.test_reports],
             "iterations": self.iterations,
             "summary": self.summary,
             "prompt_log": self.prompt_log,

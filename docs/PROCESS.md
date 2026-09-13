@@ -521,6 +521,80 @@ limit). "Revert to whichever worked best" doesn't have a documented answer
 to revert to, so I said that plainly rather than picking one and
 presenting it as a confirmed good choice.
 
+## Round twelve: accounts, a real Tester, and a database walked back to size
+
+The deployer asked for three things together: generated apps should get
+basic registration/login "memory" when the concept calls for it; the
+QA→Developer retry loop should come back, capped at two iterations; and a
+new Testing stage should exercise that login flow with synthetic users, in
+the same retry cycle, so the output "looks like a working app that can be
+deployed at any moment." Two things were worth settling before writing any
+code, so I asked rather than guessed: whether Testing should actually
+*execute* the generated app or just have a model reason about it (chose
+real headless-browser execution for HTML output, LLM-only reasoning
+elsewhere — this sandbox already has Playwright/Chromium, and there's no
+safe way to run arbitrary generated Python here), and whether every app
+should get accounts or only ones that imply them (the Architect decides
+per-app, same pattern already used for language choice).
+
+My first pass at the plan had accounts live in an in-memory JS
+object — gone the moment the page reloads. The deployer pushed back on
+seeing that: the point of the exercise was a genuinely deployable app, not
+one that forgets every user on refresh, but they also explicitly didn't
+want a real backend/database effort — keep it small. That reframed the
+persistence choice rather than the rest of the plan: HTML output now
+stores accounts in `localStorage` (the same mechanism already used for
+the primary entity's data, so no new API); Python output uses the
+standard-library `sqlite3` module, a genuine small embedded database with
+zero new dependencies. Both keep the "one self-contained file, no build
+step, no third-party deps" constraint intact.
+
+Making the browser test actually mean something took a fixed contract:
+without predictable element ids, a headless browser has no reliable way
+to find arbitrary LLM-authored form fields. `pipeline/auth_contract.py`
+holds those ids (and the exact prompt wording) once, imported by both
+`DeveloperAgent`'s prompt and `pipeline/browser_tester.py`'s Playwright
+driver — so the instructions given to the model and the selectors used to
+grade it can never drift apart. The driver's sequence deliberately proves
+persistence, not just in-page behavior: register a synthetic user, reload
+the page, then check a wrong password is rejected and the correct one
+isn't — reload is the step that would fail if `localStorage` weren't
+actually being used. Chromium runs with `--no-sandbox` (needed to launch
+as root in a container) and a route handler that aborts anything that
+isn't a `file://` request, so a hallucinated "call an API" in generated JS
+can't reach the network during the test.
+
+Playwright ended up a dev/test-only dependency (`requirements-dev.txt`),
+not part of the deployed app's `requirements.txt` — a bare Streamlit
+Community Cloud deployment has no way to fetch a ~100MB browser binary at
+build time, so `browser_tester.run_browser_auth_test` detects both "the
+package isn't installed" and "the package is installed but no browser
+binary exists" and degrades to `TestReport(executed=False, passed=True,
+...)` in either case rather than crashing the pipeline. That means the
+live deployment's Testing stage will show "skipped" for HTML apps too
+until a browser is set up there separately, which this round didn't
+attempt (fragile, slow cold starts, not asked for) — worth saying plainly
+rather than implying the deployed app gets the same coverage this
+sandbox's test suite does. The test suite itself checks whether a real,
+launchable browser is actually present (not just whether the package
+imports) and skips the browser-executing tests cleanly when it isn't,
+so it stays honest in either kind of environment instead of assuming this
+sandbox's setup everywhere.
+
+`ProjectManagerAgent.decide` now takes both the QA and Testing reports, and
+`Orchestrator.max_qa_iterations` went back to a default of 2 — a conscious
+reversal of Round ten's "one solid pass" default, explicitly requested
+this time in exchange for a real chance to fix what Testing catches.
+
+As with every provider/model change this session, none of this proves a
+*real* OpenRouter model reliably follows the id contract or judges
+`has_auth` correctly per app — that needs a live run this sandbox still
+can't make. What's verified here is the machinery: two hand-written HTML
+fixtures (one correct, one that accepts any password) prove the
+browser-driven pass/fail signal is trustworthy, and a full orchestrator
+run using a scripted mock model proves the wiring drives a real
+browser pass end to end, not just the unit-level function in isolation.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
@@ -528,9 +602,9 @@ presenting it as a confirmed good choice.
 - Stream the Developer's output into the live preview as it's written
   (OpenRouter's endpoint supports streaming) instead of waiting for the
   full reply.
-- Add a second, independent QA pass that actually executes the generated
-  JS in a headless browser (the way this project's own Playwright test
-  drives the app) rather than relying on a model reading its own code.
+- Set up a real browser on the actual Streamlit Cloud deployment (not just
+  this dev sandbox) so the Testing stage's headless-browser auth checks
+  run there too, instead of always reporting "skipped."
 - Give the deployer (not visitors — that sidebar UI is gone now) a small
   admin-only way to check the configured `OPENROUTER_API_KEY`/model still
   work, since the old visitor-facing "Test connection" button no longer

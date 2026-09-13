@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 from abc import ABC
 
+from pipeline import auth_contract
 from pipeline.llm import LLMProvider
-from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements
+from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements, TestReport
 
 
 class Agent(ABC):
@@ -49,15 +50,16 @@ Write a short project brief. Reply with ONLY a JSON object:
         data = self._ask_json("pm_kickoff", prompt)
         return ProjectBrief.from_dict(data)
 
-    def decide(self, qa_report: QAReport, iteration: int, max_iterations: int) -> bool:
+    def decide(self, qa_report: QAReport, test_report: TestReport, iteration: int, max_iterations: int) -> bool:
         """True = send it back to the Developer for another pass."""
-        return (not qa_report.passed) and iteration < max_iterations
+        return (not qa_report.passed or not test_report.passed) and iteration < max_iterations
 
     def summarize(
         self,
         brief: ProjectBrief,
         requirements: Requirements,
         qa_reports: list[QAReport],
+        test_reports: list[TestReport],
         iterations: int,
     ) -> str:
         prompt = f"""You are the Project Manager on a small software team.
@@ -66,10 +68,12 @@ This is STAGE: PM_SUMMARY.
 Project brief: {json.dumps(brief.to_dict())}
 Requirements delivered: {json.dumps(requirements.to_dict())}
 QA history (one report per iteration): {json.dumps([q.to_dict() for q in qa_reports])}
+Testing history (one report per iteration): {json.dumps([t.to_dict() for t in test_reports])}
 Total iterations taken: {iterations}
 
 Write a short (3-5 sentence) sign-off summary of what was built, what QA
-found along the way, and the final state. Plain text, no markdown."""
+and Testing found along the way, and the final state. Plain text, no
+markdown."""
         return self._ask("pm_summary", prompt).strip()
 
 
@@ -124,8 +128,14 @@ third-party dependencies to install, no external network calls. Decide the
 data model (how the primary entity is stored) and a short screen/output
 breakdown.
 
+Also decide whether this app's concept genuinely implies user accounts —
+each person seeing only their own saved data, an explicit sign-up/log-in,
+or a multi-user tool. Most rapid prototypes do NOT need this (a calculator,
+a single shared list, a converter) — only set it true when accounts
+actually fit the concept described.
+
 Reply with ONLY a JSON object:
-{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string, "language": string, "file_extension": string}}
+{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string, "language": string, "file_extension": string, "has_auth": boolean}}
 "language" must be a Pygments-recognized language id matching your choice
 (e.g. "html", "python", "javascript"). "file_extension" must match it with
 no leading dot (e.g. "html", "py", "js")."""
@@ -141,12 +151,20 @@ class DeveloperAgent(Agent):
                 "\nThe previous draft was reviewed by QA and needs these fixes:\n- "
                 + "\n- ".join(qa_feedback)
             )
+        auth_block = ""
+        if architecture.has_auth:
+            auth_block = (
+                auth_contract.DEVELOPER_PROMPT_BLOCK
+                if architecture.language == "html"
+                else auth_contract.DEVELOPER_PROMPT_BLOCK_NON_HTML
+            )
         prompt = f"""You are the Developer on a small software team.
 This is STAGE: DEVELOPER.
 
 Requirements: {json.dumps(requirements.to_dict())}
 Architecture: {json.dumps(architecture.to_dict())}
 {feedback_block}
+{auth_block}
 
 Write the COMPLETE prototype as ONE self-contained {architecture.language}
 file matching the architecture above exactly: no build step, no
@@ -168,6 +186,7 @@ Reply with ONLY the raw source code for that one file."""
 
 class QAReviewerAgent(Agent):
     def review(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> QAReport:
+        auth_line = f"\n{auth_contract.QA_PROMPT_ADDENDUM}" if architecture.has_auth else ""
         prompt = f"""You are the QA Reviewer on a small software team.
 This is STAGE: QA.
 
@@ -181,13 +200,43 @@ primary entity present as an input/parameter? Does every action (add/
 edit/delete/complete/filter/etc.) actually work in the code? Is there a
 message or output shown when there's nothing to show yet? Is user input
 handled safely for this language (no string-concatenated shell command,
-SQL query, or markup — e.g. no `innerHTML` built from untrusted input)?
+SQL query, or markup — e.g. no `innerHTML` built from untrusted input)?{auth_line}
 
 Reply with ONLY a JSON object:
 {{"passed": boolean, "issues": [string, ...]}}
 "passed" is true only if there are no issues."""
         data = self._ask_json("qa", prompt)
         return QAReport.from_dict(data)
+
+
+class TesterAgent(Agent):
+    """Runs when the app's language can't be safely executed in this
+    pipeline (anything but HTML — see browser_tester.py for the HTML
+    path). Reasons about the code with concrete synthetic test data
+    instead of proving it by actually running it.
+    """
+
+    def test(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> TestReport:
+        prompt = f"""You are the Tester on a small software team, doing a
+final pass with concrete synthetic test data before this ships.
+This is STAGE: TESTING.
+
+Requirements: {json.dumps(requirements.to_dict())}
+Architecture: {json.dumps(architecture.to_dict())}
+Generated prototype ({architecture.language} source):
+\"\"\"{code}\"\"\"
+
+Invent 2 synthetic test users (username/password) and trace through the
+code as each of them: register, then log in with the correct password
+(should succeed), then attempt to log in with a wrong password (should
+fail), then attempt to register the same username again (should be
+rejected, not silently duplicated or crashing).
+
+Reply with ONLY a JSON object:
+{{"passed": boolean, "notes": [string, ...]}}
+"passed" is true only if every one of those steps behaves correctly."""
+        data = self._ask_json("testing", prompt)
+        return TestReport.from_dict(data)
 
 
 def _strip_code_fence(text: str) -> str:

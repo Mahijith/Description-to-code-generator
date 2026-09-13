@@ -83,6 +83,7 @@ STAGE_NODES = [
     ("architect", "Architect"),
     ("developer", "Developer"),
     ("qa", "QA Review"),
+    ("testing", "Testing"),
     ("pm_summary", "Sign-off"),
 ]
 
@@ -120,7 +121,7 @@ with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
     st.title("Description → Code Generator")
-    st.caption("A 5-agent SDLC pipeline turns an audio or video description into a working prototype.")
+    st.caption("A 6-agent SDLC pipeline turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
     + "".join(f"<span class='badge'>{label}</span>" for _, label in STAGE_NODES)
@@ -130,16 +131,19 @@ st.markdown(
 
 with st.expander("How it works"):
     st.markdown(
-        "Five agents mirror a small software team:\n\n"
+        "Six agents mirror a small software team:\n\n"
         "1. **Project Manager** — writes a brief, and signs off at the end\n"
         "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
-        "3. **Architect** — picks the best language for this app and the technical approach\n"
-        "4. **Developer** — writes the prototype\n"
-        "5. **QA Reviewer** — checks it against requirements and reports what it finds\n\n"
-        "One solid pass end to end, no automatic retry loop — if you're not happy with the "
-        "result, click Regenerate for a fresh attempt. Powered by one shared OpenRouter key "
-        "and one shared Groq key, both configured by whoever deployed this app — nothing to "
-        "enter here."
+        "3. **Architect** — picks the best language for this app, the technical approach, "
+        "and whether it needs user accounts\n"
+        "4. **Developer** — writes the prototype (with registration/login when the app calls for it)\n"
+        "5. **QA Reviewer** — checks it against requirements and reports what it finds\n"
+        "6. **Tester** — tries registration/login with a synthetic user before it ships\n\n"
+        "Up to two build → review → test passes — if QA or Testing finds something on the "
+        "first pass, the Developer gets one chance to fix it, then whatever's produced ships "
+        "either way. Click Regenerate for a fresh attempt any time. Powered by one shared "
+        "OpenRouter key and one shared Groq key, both configured by whoever deployed this "
+        "app — nothing to enter here."
     )
 
 # ---------------------------------------------------------------------------
@@ -189,6 +193,9 @@ def _run_pipeline(transcript: str) -> None:
         if stage.startswith("qa"):
             iteration_count["n"] = max(iteration_count["n"], int(stage.split("pass ")[1].rstrip(")")))
             return "qa"
+        if stage.startswith("testing"):
+            iteration_count["n"] = max(iteration_count["n"], int(stage.split("pass ")[1].rstrip(")")))
+            return "testing"
         return stage
 
     def render_tracker() -> None:
@@ -198,7 +205,7 @@ def _run_pipeline(transcript: str) -> None:
             status = progress.get(key, "pending")
             badge = (
                 f"<span class='step-badge'> ×{iteration_count['n']}</span>"
-                if key in ("developer", "qa") and iteration_count["n"] > 1
+                if key in ("developer", "qa", "testing") and iteration_count["n"] > 1
                 else ""
             )
             parts.append(
@@ -290,6 +297,13 @@ if "result" in st.session_state:
                 st.write(f"Pass {i}: {'✅ passed' if qa.passed else '⚠️ issues found'}")
                 for issue in qa.issues:
                     st.caption(f"– {issue}")
+        with st.container(border=True):
+            st.caption(f"Testing history — {result.iterations} iteration(s)")
+            for i, test in enumerate(result.test_reports, start=1):
+                mode = "browser-tested" if test.executed else "not executed"
+                st.write(f"Pass {i}: {'✅ passed' if test.passed else '⚠️ issues found'} ({mode})")
+                for note in test.notes:
+                    st.caption(f"– {note}")
     with col_right:
         language = result.architecture.language
         extension = result.architecture.file_extension

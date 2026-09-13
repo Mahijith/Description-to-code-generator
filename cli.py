@@ -72,6 +72,8 @@ def main() -> int:
     (out_dir / "architecture.json").write_text(json.dumps(result.architecture.to_dict(), indent=2))
     for i, qa in enumerate(result.qa_reports, start=1):
         (out_dir / f"qa_report_iteration_{i}.json").write_text(json.dumps(qa.to_dict(), indent=2))
+    for i, test in enumerate(result.test_reports, start=1):
+        (out_dir / f"test_report_iteration_{i}.json").write_text(json.dumps(test.to_dict(), indent=2))
     (out_dir / "summary.txt").write_text(result.summary, encoding="utf-8")
     (out_dir / "prompt_log.json").write_text(json.dumps(result.prompt_log, indent=2))
 

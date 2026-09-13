@@ -5,9 +5,10 @@
 Turn a spoken audio/video description of an app into a working prototype,
 using a small team of AI agents that mirror a real software development
 lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
-Developer, and a QA Reviewer. The `Orchestrator` supports a bounded
-QA→Developer retry loop, but the app runs one solid pass by default (see
-"How it works" below for why).
+Developer, a QA Reviewer, and a Tester. When the app's concept implies user
+accounts, the Developer adds a small registration/login flow and the
+Tester tries it with a synthetic user (for HTML output, in a real headless
+browser) before the result ships — see "Accounts and testing" below.
 
 <p>
   <img src="docs/screenshots/landing-dark.png" width="49%" alt="App landing screen, dark theme">
@@ -32,9 +33,12 @@ recording (upload or microphone)
         ▼
  Project Manager  ──kickoff brief──▶
  Requirements Analyst ──requirements.json──▶
- Architect ──architecture.json (incl. chosen language)──▶
+ Architect ──architecture.json (chosen language + has_auth)──▶
  Developer ──source code──▶
- QA Reviewer ──pass/fail + issues (reported, not auto-retried by default)──▶
+ QA Reviewer ──pass/fail + issues──▶
+ Tester ──pass/fail + notes (real browser run for HTML+accounts, else LLM review)──▶
+        ▼
+ (loop back to Developer once if QA or Testing found something — max 2 passes)
         ▼
  Project Manager writes a final summary
         ▼
@@ -42,16 +46,17 @@ recording (upload or microphone)
  (no build step, no external requests, no third-party dependencies)
 ```
 
-`Orchestrator` still supports looping QA's findings back to the Developer
-for another pass (`max_qa_iterations`, fully tested in
-`tests/test_pipeline.py`) — but the app now defaults to
-`max_qa_iterations=1`, one Developer pass and one QA review, no automatic
-retry. On a longer description or a slower free model, each extra
-round-trip through the loop was a real chance to hit a rate limit,
-timeout, or the truncation this project already spent several rounds
-diagnosing (see `docs/PROCESS.md`) — a single solid pass turned out more
-reliable for complex tasks than iterating. If QA finds something you don't
-like, **Regenerate** gives you a fresh attempt.
+`Orchestrator` runs up to `max_qa_iterations` (default **2**) build →
+review → test passes: the Developer gets one chance to fix whatever QA or
+Testing found on the first pass, then whatever's produced ships either
+way — not an unbounded retry loop. (An earlier version of this app
+defaulted to a single pass with no retry at all, after several rounds of
+rate-limit/timeout/truncation pain on a longer description or a slower
+free model — see `docs/PROCESS.md`. The default went back to 2 to give
+the accounts feature below a real chance to get fixed if Testing catches
+something, while staying a small, explicit cap rather than an open-ended
+loop.) If you don't like the result, **Regenerate** gives you a fresh
+attempt any time.
 
 The Architect picks the language per app rather than defaulting to one —
 a form-driven CRUD app is usually best as one self-contained HTML file
@@ -60,7 +65,42 @@ data-processing or automation-style tool is usually better as one
 self-contained Python script. Either way the Developer writes exactly one
 file, matching whatever the Architect decided.
 
-Every one of the five agents is a thin wrapper around one `LLMProvider`
+### Accounts and testing
+
+The Architect also decides whether an app's concept genuinely implies user
+accounts (`has_auth`) — most rapid prototypes don't (a calculator, a
+single shared list), some do (a personal tracker, a multi-user tool). When
+it does:
+
+- **HTML output** stores accounts in `localStorage` under their own key
+  (separate from the app's main data) — a small embedded "database" that
+  survives a reload, not an in-memory value that resets. The Developer is
+  given a fixed contract of element ids (`pipeline/auth_contract.py`) for
+  the registration/login form and a status element, so the flow is both
+  usable and — critically — testable by something other than an LLM's
+  opinion of its own code.
+- **Python output** stores accounts in a small local SQLite file via the
+  standard-library `sqlite3` module — no new dependency, still one
+  self-contained script, but the accounts survive a restart.
+- The **Tester** stage then actually exercises this: for HTML output,
+  `pipeline/browser_tester.py` loads the generated file in a real headless
+  Chromium, registers a synthetic user, reloads the page (proving the
+  `localStorage` persistence, not just in-page state), and checks that a
+  wrong password is rejected and the correct one succeeds. For any other
+  language, or wherever a real browser isn't available, `TesterAgent`
+  falls back to an LLM reasoning through the same scenario — there's no
+  safe way to execute arbitrary generated code for other languages here.
+  Either way you get a `TestReport` per iteration in the UI ("Testing
+  history"), and it's flagged `executed=True`/`False` so you can tell a
+  real result from an LLM's guess.
+- Playwright is a **dev/test-only** dependency (`requirements-dev.txt`),
+  not part of the deployed app's `requirements.txt`. A bare Streamlit
+  Community Cloud deployment has no browser binary available, so its
+  Testing stage will show "skipped" for HTML apps too rather than a real
+  pass/fail, until/unless a browser is set up there separately (not done
+  by this project — see `docs/PROCESS.md`).
+
+Every one of the six agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. Both `app.py` and `cli.py` default to **`OpenRouterProvider`**
 (default model: `inclusionai/ling-3.0-flash-vl:free` — see `docs/PROCESS.md`
@@ -247,15 +287,19 @@ pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider (default), AIHubMixProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
-  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. language), QAReport, PipelineResult
-  agents.py        Agent (ABC) + the 5 SDLC personas
-  orchestrator.py  Orchestrator — runs the pipeline incl. the QA/Dev loop
+  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. language/has_auth), QAReport, TestReport, PipelineResult
+  agents.py        Agent (ABC) + the 6 SDLC personas (incl. TesterAgent)
+  auth_contract.py the register/login element-id contract shared by DeveloperAgent's prompt and browser_tester.py
+  browser_tester.py real headless-browser auth test for HTML output (dev/test dependency, degrades gracefully)
+  orchestrator.py  Orchestrator — runs the pipeline incl. the QA+Testing/Dev loop
 app.py             Streamlit UI (hero, step tracker, results, buttons) — no sidebar
 cli.py             headless runner
 .streamlit/config.toml   theme (light + dark) + maxUploadSize
 assets/            logo.png (page icon + in-app mark), social_preview.png
 examples/          sample transcripts (used by cli.py/tests) + committed mock-mode output
-tests/             pytest suite (runs entirely against MockLLMProvider)
+tests/             pytest suite (runs entirely against MockLLMProvider; browser-executed
+                   auth tests skip cleanly where no real Chromium binary is available)
+requirements-dev.txt  dev/test-only deps (pytest, playwright) — not part of the deployed app
 docs/PROCESS.md    the brainstorming / prompt-iteration write-up
 docs/screenshots/  README screenshots
 ```
