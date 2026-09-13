@@ -466,6 +466,47 @@ information wasn't the problem, the automatic retry on top of it was — and
 `Regenerate` remains the manual equivalent of a second attempt, just
 initiated by a person instead of the pipeline deciding on its own.
 
+## Round eleven: switching providers, not just models
+
+OpenRouter's shared-key rate limit (round ten's own change made this worse
+in one sense — a single failed attempt now costs the same, but there's no
+retry to spread across, so hitting the limit mid-run is more visible) kept
+recurring under real testing regardless of which OpenRouter model was
+picked, since the limit is per-key, not per-model. The deployer's fix
+wasn't another model swap — it was a different provider entirely:
+[AIHubMix](https://aihubmix.com), with its own free-standing API key.
+
+I couldn't verify AIHubMix's API shape myself — `aihubmix.com` is
+unreachable from this sandbox, same as every other external API this
+project has touched. Rather than guess at endpoint URLs, auth header
+format, or response shape (guessing wrong here fails silently or
+confusingly, exactly the kind of mistake this project has spent many
+rounds trying to avoid), I asked the deployer for a real example. They
+provided AIHubMix's own quick-start snippet: an OpenAI-compatible
+`POST https://aihubmix.com/v1/chat/completions` with a Bearer token and
+the same `{"model": ..., "messages": [...]}` body shape OpenRouter uses.
+That one snippet answered the request shape; the model id for Ling on
+AIHubMix's catalog was inferred from the model's page URL
+(`aihubmix.com/model/ling-3.0-flash-free` → `ling-3.0-flash-free`) rather
+than confirmed directly, which I said plainly rather than presenting as
+verified — if a real run rejects that model id, that's the first thing to
+check.
+
+Since AIHubMix turned out to be shaped exactly like OpenRouter's endpoint,
+implementing `AIHubMixProvider` as a second copy of `OpenRouterProvider`'s
+~50 lines of request/error-handling would have duplicated every fix this
+project already made there (the embedded-error-object check, the
+truncation-with-evidence message, the masked-key 401 logging) — and any
+future fix to one would silently not apply to the other. Factored the
+shared logic into one function
+(`_complete_via_openai_compatible_api`, parameterized by URL, key, model,
+and provider name for error messages) that both provider classes call;
+`OpenRouterProvider`'s own tests kept passing unchanged after the
+refactor, which is the cheapest evidence that behavior didn't shift.
+`app.py` now constructs `AIHubMixProvider` by default; `OpenRouterProvider`
+stays fully implemented and is what `cli.py` still uses, so switching back
+is a one-line change, not lost work.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

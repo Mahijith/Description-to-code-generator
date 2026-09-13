@@ -62,20 +62,24 @@ file, matching whatever the Architect decided.
 
 Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
-answering them. The default implementation is **`OpenRouterProvider`**,
-which talks to [OpenRouter](https://openrouter.ai)'s free-tier models
-(default: `inclusionai/ling-3.0-flash-vl:free` — a deployer choice; see
-`docs/PROCESS.md` for the back-and-forth on picking a free model that
-reliably finishes the Developer stage's HTML/CSS/JS output without hitting
-a free-tier output-length cap). **No Claude
-is used anywhere in this app** — that was a deliberate choice to run on
-free models. Because OpenRouter is one gateway, **a single API key powers
-every agent**; there is no per-agent or per-stage key. The app owner sets
-this key once (`OPENROUTER_API_KEY`, as a Streamlit Cloud secret or
-environment variable) — visitors don't need their own, and there's no
-sidebar key/model input for them to fill in. Swapping in a different
-backend (Claude, Gemini, a local Ollama model) or model id later means
-writing one more class or changing one constant, not rewriting the app.
+answering them. The Streamlit app (`app.py`) defaults to
+**`AIHubMixProvider`**, which talks to [AIHubMix](https://aihubmix.com)'s
+OpenAI-compatible endpoint (default model: `ling-3.0-flash-free`) — added
+after `OpenRouterProvider`'s free-tier shared key kept hitting OpenRouter's
+rate limit under real testing (see `docs/PROCESS.md` for the full
+back-and-forth on picking a model/provider). `OpenRouterProvider` is still
+fully implemented and tested (`cli.py` uses it by default) — both talk to
+an OpenAI-chat-completions-shaped API, so they share one
+request/error-handling implementation and differ only in URL, key source,
+and default model. **No Claude is used anywhere in this app** — that was a
+deliberate choice to run on free models. Because each provider is one
+gateway, **a single API key powers every agent** for whichever one is
+active; there is no per-agent or per-stage key. The app owner sets this key
+once (an environment variable or Streamlit Cloud secret) — visitors don't
+need their own, and there's no sidebar key/model input for them to fill in.
+Swapping in a different backend (Claude, Gemini, a local Ollama model) or
+model id later means writing one more class or changing one constant, not
+rewriting the app.
 
 Transcription is a separate, independent concern (`pipeline/transcribe.py`):
 audio/video files are transcribed via **Groq's hosted Whisper API**. An
@@ -92,8 +96,8 @@ Groq's API, since that's the point it stops accepting files in practice.
 
 ```bash
 pip install -r requirements.txt
-export OPENROUTER_API_KEY=sk-...  # free key from openrouter.ai/keys, powers the 5-agent pipeline
-export GROQ_API_KEY=gsk_...       # free key from console.groq.com/keys, needed only for audio/video transcription
+export AIHUBMIX_API_KEY=...   # key from aihubmix.com, powers the 5-agent pipeline
+export GROQ_API_KEY=gsk_...   # free key from console.groq.com/keys, needed only for audio/video transcription
 streamlit run app.py
 ```
 
@@ -110,19 +114,28 @@ transcript (useful to see a different draft against a live model), and
 
 ### Command line (no Streamlit)
 
+`cli.py` uses `OpenRouterProvider` (not AIHubMix) — a separate, independent
+path from the Streamlit app:
+
 ```bash
 python cli.py run examples/sample_transcript.txt --out examples/output --mock
 # or, with a real key:
 OPENROUTER_API_KEY=sk-... python cli.py run my_recording.mp3 --out output
 ```
 
-### Getting a free OpenRouter API key
+### Getting API keys
 
-1. Sign up at [openrouter.ai](https://openrouter.ai) (no card required).
-2. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
-3. Check [openrouter.ai/models](https://openrouter.ai/models) (filter by
-   "Free") if you want to point `DEFAULT_MODEL` (`pipeline/llm.py`) at a
-   different model — free-tier availability changes over time.
+- **AIHubMix** (powers the Streamlit app): sign up at
+  [aihubmix.com](https://aihubmix.com) and create a key from their
+  dashboard. Check their model catalog for the exact id of whichever model
+  you want — `DEFAULT_AIHUBMIX_MODEL` in `pipeline/llm.py` is one constant
+  to change.
+- **OpenRouter** (powers `cli.py`, and available as `OpenRouterProvider` if
+  you want to switch the app back): sign up at
+  [openrouter.ai](https://openrouter.ai) (no card required), create a key
+  at [openrouter.ai/keys](https://openrouter.ai/keys), and check
+  [openrouter.ai/models](https://openrouter.ai/models) (filter by "Free")
+  for current free-tier options.
 
 ## Deploying it for free (Streamlit Community Cloud)
 
@@ -137,18 +150,21 @@ which runs a Streamlit app straight from a public GitHub repo at no cost:
 4. Click **Deploy**. `requirements.txt` is picked up automatically.
 5. Under the app's **Settings → Secrets**, add:
    ```toml
-   OPENROUTER_API_KEY = "sk-..."
+   AIHUBMIX_API_KEY = "..."
    GROQ_API_KEY = "gsk_..."
    ```
-   (free at [openrouter.ai/keys](https://openrouter.ai/keys) and
+   (from [aihubmix.com](https://aihubmix.com) and
    [console.groq.com/keys](https://console.groq.com/keys)). Both are the
    *deployer's* keys, set once, shared by every visitor — nobody pastes in
    their own key or picks a model; Generate shows a clear "not configured"
    error if either key is missing.
 
 Since both keys are shared across every visitor rather than one each,
-watch OpenRouter's/Groq's free-tier rate limits under real traffic — a
-busy app can hit them faster than a per-visitor-key design would.
+watch AIHubMix's/Groq's rate limits under real traffic — a busy app can
+hit them faster than a per-visitor-key design would. This project already
+switched providers once for exactly this reason (OpenRouter → AIHubMix);
+`OpenRouterProvider` remains available if you'd rather use that instead —
+just point `app.py` at it and set `OPENROUTER_API_KEY` instead.
 
 ### Making the deployed app look polished (a few manual, one-time steps)
 
@@ -174,16 +190,21 @@ only the repo/deploy owner can make — nothing here needs code:
 
 ## Security notes
 
-- The OpenRouter key is wrapped in a small `Secrets` class
-  (`pipeline/secrets.py`) whose `__repr__`/`__str__` never expose the raw
-  value. The raw key is read in exactly one place in the entire codebase —
-  inside `OpenRouterProvider`, to build the request header — and is never
-  written into the prompt log, the generated prototype, or any error
-  message. Both `OPENROUTER_API_KEY` and `GROQ_API_KEY` live only in
-  Streamlit secrets/environment variables, set by the deployer — never in
-  a widget a visitor's browser can read back.
+- No provider ever logs or serializes a raw key. `OpenRouterProvider` wraps
+  its key in a small `Secrets` class (`pipeline/secrets.py`) whose
+  `__repr__`/`__str__` never expose the raw value; `AIHubMixProvider` and
+  `GroqWhisperTranscriber` take the key as a plain string but only ever
+  print a masked form (`pipeline/secrets.py`'s `mask_key` — first/last 4
+  chars and length) to the server log, and only on an auth failure, to help
+  diagnose a wrong/stale key without exposing it. No key is ever written
+  into the prompt log, the generated prototype, or an error message shown
+  in the browser. `AIHUBMIX_API_KEY`, `GROQ_API_KEY`, and (if you switch
+  back) `OPENROUTER_API_KEY` all live only in Streamlit secrets/environment
+  variables, set by the deployer — never in a widget a visitor's browser
+  can read back.
 - Every agent only ever holds a reference to the `LLMProvider` interface,
-  never to `Secrets` itself, so a bug in a prompt can't leak a key.
+  never to a raw key or `Secrets` itself, so a bug in a prompt can't leak
+  one.
 - The Developer/QA prompts require safe handling of untrusted input
   regardless of which language the Architect picks: `textContent` instead
   of string-built `innerHTML` for HTML output, and no string-concatenated
@@ -204,20 +225,21 @@ only the repo/deploy owner can make — nothing here needs code:
   highlighted source, not an executed result, since there's no safe way to
   run arbitrary generated code inside the app itself.
 - Free-tier model quality and rate limits vary and change over time, and
-  since one `OPENROUTER_API_KEY` is now shared across every visitor, a busy
+  since one `AIHUBMIX_API_KEY` is now shared across every visitor, a busy
   deployment can hit rate limits faster than a per-visitor-key design
-  would; if a run fails, try again shortly or point `DEFAULT_MODEL` at a
-  different model.
+  would; if a run fails, try again shortly or point `DEFAULT_AIHUBMIX_MODEL`
+  at a different model (or switch `app.py` back to `OpenRouterProvider`).
 - Audio/video input needs a `GROQ_API_KEY` configured by the deployer,
   outbound internet access to Groq, and a file no larger than ~19.5MB
   (Groq's real cutoff in practice, tighter than its documented 25MB) — the
   app rejects anything bigger before ever calling the API.
-- This app sends no `max_tokens`/output cap of its own on OpenRouter
-  requests — deliberate, per the deployer. If a model's reply still gets
-  cut off (`finish_reason: "length"`, meaning the model or provider hit
-  *its own* limit), that raises a clear error naming how many tokens the
-  model actually produced, rather than silently handing a truncated file
-  to QA. The Developer stage is most exposed to this since it writes the
+- Neither `OpenRouterProvider` nor `AIHubMixProvider` sends a `max_tokens`/
+  output cap of its own — deliberate, per the deployer. If a model's reply
+  still gets cut off (`finish_reason: "length"`, meaning the model or
+  provider hit *its own* limit), that raises a clear error naming how many
+  tokens the model actually produced, rather than silently handing a
+  truncated file to QA. The Developer stage is most exposed to this since
+  it writes the
   largest output of any agent; a model that doesn't converge on a single,
   complete file will keep hitting this regardless of any cap, ours or its
   own.
@@ -227,7 +249,7 @@ only the repo/deploy owner can make — nothing here needs code:
 ```
 pipeline/
   secrets.py       Secrets — encapsulates the API key
-  llm.py           LLMProvider (ABC), OpenRouterProvider, MockLLMProvider
+  llm.py           LLMProvider (ABC), AIHubMixProvider (default), OpenRouterProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
   schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. language), QAReport, PipelineResult
   agents.py        Agent (ABC) + the 5 SDLC personas

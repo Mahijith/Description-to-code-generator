@@ -1,14 +1,20 @@
 """LLM backends behind one interface, so an agent never knows or cares which
 model actually answers it.
 
-OpenRouterProvider is the default (one shared, deployer-supplied API key —
-see app.py). MockLLMProvider is deterministic and needs no network/key at
-all — it backs the test suite and `cli.py run --mock`.
+AIHubMixProvider is the default in app.py (one shared, deployer-supplied
+API key — see app.py) — added after OpenRouter's shared key kept hitting
+its rate limit under real testing. OpenRouterProvider remains fully
+implemented and tested; both talk to an OpenAI-compatible chat-completions
+endpoint, so they share one request/error-handling implementation
+(`_complete_via_openai_compatible_api`) and differ only in URL, key
+source, and default model. MockLLMProvider is deterministic and needs no
+network/key at all — it backs the test suite and `cli.py run --mock`.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from abc import ABC, abstractmethod
@@ -18,11 +24,18 @@ import requests
 
 from pipeline.secrets import Secrets, mask_key
 
-# Deployer's choice — see docs/PROCESS.md for the full back-and-forth on
-# picking one. Free-tier model on OpenRouter; swap this one constant to
-# change it, since every agent shares it and there's no per-agent override.
+# Free-tier model on OpenRouter; swap this one constant to change it, since
+# every agent shares it and there's no per-agent override. See
+# docs/PROCESS.md for the back-and-forth on picking one.
 DEFAULT_MODEL = "inclusionai/ling-3.0-flash-vl:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# AIHubMix model id inferred from the model's catalog page URL
+# (aihubmix.com/model/ling-3.0-flash-free) — aihubmix.com is unreachable
+# from this sandbox to verify the exact API string directly, so if a real
+# run rejects this model id, that's the first thing to check.
+DEFAULT_AIHUBMIX_MODEL = "ling-3.0-flash-free"
+AIHUBMIX_URL = "https://aihubmix.com/v1/chat/completions"
 
 
 class LLMError(RuntimeError):
@@ -88,6 +101,60 @@ def _extract_json(text: str):
     return None
 
 
+def _complete_via_openai_compatible_api(
+    *, url: str, api_key: str, model: str, prompt: str, timeout: int, provider_name: str, key_env_var: str,
+) -> str:
+    """Shared request/error-handling for any OpenAI-chat-completions-shaped
+    provider (OpenRouter, AIHubMix, ...): same payload shape, same failure
+    modes worth surfacing distinctly — a rejected key, a rate limit, an
+    error object embedded in an HTTP 200 body (a provider proxying an
+    upstream outage), and a reply cut off before finishing. This app never
+    sends its own token limit, so a "length" finish_reason always means the
+    model or provider hit *its own* maximum, not a restriction this app
+    imposed — see docs/PROCESS.md for the rounds of debugging that shaped
+    every one of these checks.
+    """
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    except requests.RequestException as exc:
+        raise LLMError(f"Request to {provider_name} failed: {exc}") from None
+
+    if resp.status_code == 401:
+        # Printed to the server log (stderr), never to the browser — the
+        # masked key/length is enough to spot a stale, truncated, or
+        # wrong-key configuration mistake without exposing the key.
+        print(f"[llm] {provider_name} 401 with {key_env_var}={mask_key(api_key)}", file=sys.stderr)
+        raise LLMError(f"{provider_name} rejected the API key (401 Unauthorized): {resp.text[:200]}")
+    if resp.status_code == 429:
+        raise LLMError(f"{provider_name} rate-limited this request (429) — try again shortly")
+    if resp.status_code >= 400:
+        raise LLMError(f"{provider_name} returned {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    if isinstance(data, dict) and "error" in data:
+        error = data["error"]
+        message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+        raise LLMError(f"{provider_name} upstream error: {message}")
+    try:
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMError(f"Unexpected {provider_name} response shape: {data!r}") from exc
+
+    if choice.get("finish_reason") == "length":
+        usage = data.get("usage") or {}
+        completion_tokens = usage.get("completion_tokens")
+        detail = f"the model produced {completion_tokens} tokens before stopping" if completion_tokens is not None else "the reply was cut off"
+        raise LLMError(
+            f"{provider_name} cut the reply short with model {model!r}: {detail}. This app sends no "
+            "token limit of its own, so the cutoff came from the model/provider's own maximum. Try "
+            "again, or switch to a different model."
+        )
+    return content
+
+
 class OpenRouterProvider(LLMProvider):
     """Talks to OpenRouter's OpenAI-compatible chat-completions endpoint.
 
@@ -104,65 +171,40 @@ class OpenRouterProvider(LLMProvider):
         self._timeout = timeout
 
     def complete(self, prompt: str) -> str:
-        headers = {
-            "Authorization": f"Bearer {self._secrets.reveal_openrouter_key()}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self._model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        try:
-            resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=self._timeout)
-        except requests.RequestException as exc:
-            raise LLMError(f"Request to OpenRouter failed: {exc}") from None
+        return _complete_via_openai_compatible_api(
+            url=OPENROUTER_URL,
+            api_key=self._secrets.reveal_openrouter_key(),
+            model=self._model,
+            prompt=prompt,
+            timeout=self._timeout,
+            provider_name="OpenRouter",
+            key_env_var="OPENROUTER_API_KEY",
+        )
 
-        if resp.status_code == 401:
-            # Printed to the server log (stderr), never to the browser — the
-            # masked key/length is enough to spot a stale, truncated, or
-            # wrong-key configuration mistake without exposing the key.
-            print(
-                f"[llm] OpenRouter 401 with OPENROUTER_API_KEY={mask_key(self._secrets.reveal_openrouter_key())}",
-                file=sys.stderr,
-            )
-            raise LLMError(f"OpenRouter rejected the API key (401 Unauthorized): {resp.text[:200]}")
-        if resp.status_code == 429:
-            raise LLMError("OpenRouter rate-limited this request (429) — try again shortly")
-        if resp.status_code >= 400:
-            raise LLMError(f"OpenRouter returned {resp.status_code}: {resp.text[:300]}")
 
-        data = resp.json()
-        if isinstance(data, dict) and "error" in data:
-            # OpenRouter can return HTTP 200 with an error object embedded in
-            # the body — e.g. proxying an upstream provider outage — so this
-            # has to be checked regardless of resp.status_code, or it falls
-            # through to the generic "unexpected shape" branch below with no
-            # indication anything upstream actually failed.
-            error = data["error"]
-            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
-            raise LLMError(f"OpenRouter upstream error: {message}")
-        try:
-            choice = data["choices"][0]
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError(f"Unexpected OpenRouter response shape: {data!r}") from exc
+class AIHubMixProvider(LLMProvider):
+    """Talks to AIHubMix's OpenAI-compatible chat-completions endpoint —
+    an alternate free-tier gateway, added after OpenRouter's shared key
+    kept hitting its rate limit under real testing.
+    """
 
-        if choice.get("finish_reason") == "length":
-            # This app doesn't send a max_tokens value — no cap of ours to
-            # hit — so "length" here means the model or OpenRouter itself
-            # cut the reply off at its own limit. Not raising this would
-            # silently hand a truncated reply to the caller as if it were
-            # complete; that's a real failure worth surfacing, not a
-            # restriction this app is imposing.
-            usage = data.get("usage") or {}
-            completion_tokens = usage.get("completion_tokens")
-            detail = f"the model produced {completion_tokens} tokens before stopping" if completion_tokens is not None else "the reply was cut off"
-            raise LLMError(
-                f"OpenRouter cut the reply short with model {self._model!r}: {detail}. This app sends no "
-                "token limit of its own, so the cutoff came from the model/provider's own maximum. Try "
-                "again, or switch to a different model."
-            )
-        return content
+    def __init__(self, api_key: str | None = None, model: str = DEFAULT_AIHUBMIX_MODEL, timeout: int = 120):
+        self._api_key = (api_key or os.environ.get("AIHUBMIX_API_KEY") or "").strip()
+        if not self._api_key:
+            raise LLMError("No AIHubMix API key configured")
+        self._model = model
+        self._timeout = timeout
+
+    def complete(self, prompt: str) -> str:
+        return _complete_via_openai_compatible_api(
+            url=AIHUBMIX_URL,
+            api_key=self._api_key,
+            model=self._model,
+            prompt=prompt,
+            timeout=self._timeout,
+            provider_name="AIHubMix",
+            key_env_var="AIHUBMIX_API_KEY",
+        )
 
 
 @dataclass

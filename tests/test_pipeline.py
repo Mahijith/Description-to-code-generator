@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
-from pipeline.llm import LLMError, MockLLMProvider, OpenRouterProvider
+from pipeline.llm import AIHubMixProvider, LLMError, MockLLMProvider, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
 from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
@@ -133,6 +133,37 @@ def test_openrouter_provider_shows_actual_completion_tokens_on_truncation():
     with patch("requests.post", return_value=fake_response):
         with pytest.raises(LLMError, match="412"):
             provider.complete("hello")
+
+
+def test_aihubmix_provider_requires_an_api_key():
+    with pytest.raises(LLMError, match="No AIHubMix API key configured"):
+        AIHubMixProvider(api_key="")
+
+
+def test_aihubmix_provider_returns_text_on_success():
+    provider = AIHubMixProvider(api_key="test-key", model="ling-3.0-flash-free")
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "hello there"}, "finish_reason": "stop"}]
+    }
+    with patch("requests.post", return_value=fake_response) as mock_post:
+        assert provider.complete("hi") == "hello there"
+    assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
+    assert mock_post.call_args.args[0] == "https://aihubmix.com/v1/chat/completions"
+    assert mock_post.call_args.kwargs["json"]["model"] == "ling-3.0-flash-free"
+    assert "max_tokens" not in mock_post.call_args.kwargs["json"]
+
+
+def test_aihubmix_provider_reuses_the_same_error_handling_as_openrouter():
+    """Both providers share one request/error-handling implementation, so
+    a 401 from AIHubMix should read the same way OpenRouter's does, just
+    naming AIHubMix instead.
+    """
+    provider = AIHubMixProvider(api_key="bad-key")
+    fake_response = MagicMock(status_code=401, text="Invalid API Key")
+    with patch("requests.post", return_value=fake_response):
+        with pytest.raises(LLMError, match="AIHubMix rejected the API key \\(401"):
+            provider.complete("hi")
 
 
 def test_passthrough_transcriber_reads_text_file(tmp_path):

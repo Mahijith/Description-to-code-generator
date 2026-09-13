@@ -11,9 +11,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from pipeline.llm import DEFAULT_MODEL, LLMError, OpenRouterProvider
+from pipeline.llm import AIHubMixProvider, DEFAULT_AIHUBMIX_MODEL, LLMError
 from pipeline.orchestrator import Orchestrator
-from pipeline.secrets import Secrets
 from pipeline.transcribe import TranscriptionError, make_transcriber_for
 
 MAX_UPLOAD_BYTES = 19_500_000  # Groq's API stops accepting files above ~19.5MB in practice
@@ -41,26 +40,26 @@ def _bridge_secret_to_env(name: str) -> None:
 
 
 _bridge_secret_to_env("GROQ_API_KEY")
-_bridge_secret_to_env("OPENROUTER_API_KEY")
+_bridge_secret_to_env("AIHUBMIX_API_KEY")
 
 
 def _friendly_llm_error(exc: LLMError) -> str:
     msg = str(exc)
-    if "No OpenRouter API key configured" in msg:
+    if "No AIHubMix API key configured" in msg:
         return (
-            "This app isn't configured with an OpenRouter API key yet. If you're the "
-            "deployer: add OPENROUTER_API_KEY under the app's Settings → Secrets."
+            "This app isn't configured with an AIHubMix API key yet. If you're the "
+            "deployer: add AIHUBMIX_API_KEY under the app's Settings → Secrets."
         )
     if "401" in msg:
-        return f"This app's configured API key was rejected by OpenRouter ({msg}). If you're the deployer: check it at openrouter.ai/keys."
+        return f"This app's configured API key was rejected ({msg}). If you're the deployer: check your AIHubMix API key."
     if "429" in msg:
-        return "OpenRouter rate-limited this app (every visitor shares one key). Wait a bit and try again."
-    if "OpenRouter upstream error" in msg:
+        return "The model's provider rate-limited this app (every visitor shares one key). Wait a bit and try again."
+    if "upstream error" in msg:
         return f"The model's provider is temporarily unavailable ({msg}). This isn't a key/config problem — wait a moment and try again."
     if "not valid JSON" in msg:
         return "The model didn't reply in the expected format. Try again."
-    if "Request to OpenRouter failed" in msg:
-        return "Couldn't reach OpenRouter right now. Try again shortly."
+    if "Request to" in msg and "failed" in msg:
+        return f"Couldn't reach the model's provider right now ({msg}). Try again shortly."
     return msg
 
 # ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ with st.expander("How it works"):
         "4. **Developer** — writes the prototype\n"
         "5. **QA Reviewer** — checks it against requirements and reports what it finds\n\n"
         "One solid pass end to end, no automatic retry loop — if you're not happy with the "
-        "result, click Regenerate for a fresh attempt. Powered by one shared OpenRouter key "
+        "result, click Regenerate for a fresh attempt. Powered by one shared AIHubMix key "
         "and one shared Groq key, both configured by whoever deployed this app — nothing to "
         "enter here."
     )
@@ -172,7 +171,7 @@ generate = st.button("Generate", type="primary", disabled=audio_payload is None)
 
 def _run_pipeline(transcript: str) -> None:
     try:
-        llm = OpenRouterProvider(Secrets(os.environ.get("OPENROUTER_API_KEY")), model=DEFAULT_MODEL)
+        llm = AIHubMixProvider(os.environ.get("AIHUBMIX_API_KEY"), model=DEFAULT_AIHUBMIX_MODEL)
         orchestrator = Orchestrator(llm)
     except LLMError as exc:
         st.error(_friendly_llm_error(exc))
@@ -328,6 +327,6 @@ if "result" in st.session_state:
 
 st.divider()
 st.caption(
-    "Built as a multi-agent SDLC pipeline — no Claude, powered by one shared OpenRouter key and "
+    "Built as a multi-agent SDLC pipeline — no Claude, powered by one shared AIHubMix key and "
     "Groq-hosted Whisper transcription. [Source on GitHub](https://github.com/Mahijith/Description-to-code-generator)"
 )
