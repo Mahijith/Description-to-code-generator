@@ -505,7 +505,21 @@ and provider name for error messages) that both provider classes call;
 refactor, which is the cheapest evidence that behavior didn't shift.
 `app.py` now constructs `AIHubMixProvider` by default; `OpenRouterProvider`
 stays fully implemented and is what `cli.py` still uses, so switching back
-is a one-line change, not lost work.
+is a one-line change, not lost work. **Update:** that one-line reversal is
+exactly what happened next — AIHubMix's free `ling-3.0-flash-free` came
+back `400 no_available_channel` (confirmed via a second real snippet the
+deployer ran directly against AIHubMix, which ruled out a wrong model id
+or a request-shape bug on this app's side — it's a capacity/availability
+issue on AIHubMix's end for that specific free model), and the deployer
+asked to revert to OpenRouter. Reverted `app.py` to `OpenRouterProvider`
+with `DEFAULT_MODEL` unchanged (`inclusionai/ling-3.0-flash-vl:free`, the
+last one actually configured there) — worth being honest that nothing in
+this session's transcript shows clear evidence any specific OpenRouter
+model completed a full run successfully; every one hit a distinct failure
+(an upstream outage, silent or detected truncation, or the shared-key rate
+limit). "Revert to whichever worked best" doesn't have a documented answer
+to revert to, so I said that plainly rather than picking one and
+presenting it as a confirmed good choice.
 
 ## What I'd do next with more time
 
