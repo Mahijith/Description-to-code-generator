@@ -7,17 +7,17 @@
 Turn a spoken audio/video description of an app into a working prototype,
 using a small team of AI agents that mirror a real software development
 lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
-Developer, a QA Reviewer, and a Tester. When the app's concept implies user
-accounts, the Developer adds a small registration/login flow and the
-Tester tries it with a synthetic user (for HTML output, in a real headless
-browser) before the result ships — see "Accounts and testing" below.
+Developer, and a Code Reviewer — plus a real automated Testing stage that
+actually runs the result in a headless browser: adding, editing, deleting,
+and filtering an item, and registration/login when the app's concept
+implies user accounts. See "Accounts and testing" below.
 
 <p>
   <img src="docs/screenshots/landing-dark.png" width="49%" alt="App landing screen, dark theme">
   <img src="docs/screenshots/landing-light.png" width="49%" alt="App landing screen, light theme">
 </p>
 <p>
-  <img src="docs/screenshots/result-dark.png" width="100%" alt="Pipeline result: step tracker, QA history, live preview">
+  <img src="docs/screenshots/result-dark.png" width="100%" alt="Pipeline result: step tracker, code review history, live preview">
 </p>
 
 Light and dark are Streamlit's own native theme switcher (top-right "⋮"
@@ -35,74 +35,83 @@ recording (upload or microphone)
         ▼
  Project Manager  ──kickoff brief──▶
  Requirements Analyst ──requirements.json──▶
- Architect ──architecture.json (chosen language + has_auth)──▶
+ Architect ──architecture.json (has_auth)──▶
  Developer ──source code──▶
- QA Reviewer ──pass/fail + issues──▶
- Tester ──pass/fail + notes (real browser run for HTML+accounts, else LLM review)──▶
+ Code Reviewer ──pass/fail + issues──▶
+ Testing ──pass/fail + notes (a real headless browser drives the app itself)──▶
         ▼
- (loop back to Developer once if QA or Testing found something — max 2 passes)
+ (loop back to Developer if Code Review or Testing found something — max 3 passes)
         ▼
  Project Manager writes a final summary
         ▼
- a single self-contained, working prototype file
+ a single self-contained HTML file
  (no build step, no external requests, no third-party dependencies)
 ```
 
-`Orchestrator` runs up to `max_qa_iterations` (default **2**) build →
-review → test passes: the Developer gets one chance to fix whatever QA or
-Testing found on the first pass, then whatever's produced ships either
-way — not an unbounded retry loop. (An earlier version of this app
+`Orchestrator` runs up to `max_qa_iterations` (default **3**) build →
+review → test passes: the Developer gets up to two more chances to fix
+whatever Code Review or Testing found, then whatever's produced ships
+either way — not an unbounded retry loop. (An earlier version of this app
 defaulted to a single pass with no retry at all, after several rounds of
 rate-limit/timeout/truncation pain on a longer description or a slower
-free model — see `docs/PROCESS.md`. The default went back to 2 to give
-the accounts feature below a real chance to get fixed if Testing catches
-something, while staying a small, explicit cap rather than an open-ended
-loop.) If you don't like the result, **Regenerate** gives you a fresh
-attempt any time.
+free model — see `docs/PROCESS.md`. The default has grown since — first
+to 2, now to 3 — as Testing got real teeth: real browser execution costs
+no LLM requests at all, so the retry budget is sized purely around the LLM
+calls, not the testing itself.) If you don't like the result,
+**Regenerate** gives you a fresh attempt any time.
 
-The Architect picks the language per app rather than defaulting to one —
-a form-driven CRUD app is usually best as one self-contained HTML file
-(`localStorage` persistence, opens directly in a browser); a
-data-processing or automation-style tool is usually better as one
-self-contained Python script. Either way the Developer writes exactly one
-file, matching whatever the Architect decided.
+Every app is one self-contained HTML file — inline CSS/JS, `localStorage`
+persistence, opens directly in a browser, no server. The Architect no
+longer picks a language per app (an earlier design let it choose Python
+for automation-style tools); committing to one output shape is what makes
+real, non-optional browser testing possible for every app, not just the
+ones that happen to land on HTML.
 
 ### Accounts and testing
 
-The Architect also decides whether an app's concept genuinely implies user
+The Architect decides whether an app's concept genuinely implies user
 accounts (`has_auth`) — most rapid prototypes don't (a calculator, a
 single shared list), some do (a personal tracker, a multi-user tool). When
-it does:
+it does, accounts live in `localStorage` under their own key (separate
+from the app's main data) — a small embedded "database" that survives a
+reload, not an in-memory value that resets. The Developer is given a
+fixed contract of element ids (`pipeline/auth_contract.py`) for the
+registration/login form and a status element, so the flow is both usable
+and — critically — testable by something other than an LLM's opinion of
+its own code.
 
-- **HTML output** stores accounts in `localStorage` under their own key
-  (separate from the app's main data) — a small embedded "database" that
-  survives a reload, not an in-memory value that resets. The Developer is
-  given a fixed contract of element ids (`pipeline/auth_contract.py`) for
-  the registration/login form and a status element, so the flow is both
-  usable and — critically — testable by something other than an LLM's
-  opinion of its own code.
-- **Python output** stores accounts in a small local SQLite file via the
-  standard-library `sqlite3` module — no new dependency, still one
-  self-contained script, but the accounts survive a restart.
-- The **Tester** stage then actually exercises this: for HTML output,
-  `pipeline/browser_tester.py` loads the generated file in a real headless
-  Chromium, registers a synthetic user, reloads the page (proving the
-  `localStorage` persistence, not just in-page state), and checks that a
-  wrong password is rejected and the correct one succeeds. For any other
-  language, or wherever a real browser isn't available, `TesterAgent`
-  falls back to an LLM reasoning through the same scenario — there's no
-  safe way to execute arbitrary generated code for other languages here.
-  Either way you get a `TestReport` per iteration in the UI ("Testing
-  history"), and it's flagged `executed=True`/`False` so you can tell a
-  real result from an LLM's guess.
+The Testing stage is real, not an LLM's guess, and it's not limited to
+accounts — every app's core add/edit/delete/filter flow gets driven for
+real:
+
+- `pipeline/crud_contract.py` derives a fixed-but-per-app set of element
+  ids from the app's *actual* fields (e.g. a "due date" field becomes
+  `#field-due-date`) and declared filters, and hands the same ids to both
+  the Developer's prompt and the browser driver — they can't drift apart.
+  Boolean fields (e.g. a "completed" flag) are deliberately left out of
+  this contract — a real app almost never lets you create something
+  pre-completed — and aren't real-execution-tested; Code Review's text
+  judgment still covers them, along with any filter that doesn't target a
+  `select`-typed field (there's no unambiguous way to browser-test a
+  free-text filter's UI convention).
+- `pipeline/browser_tester.py` loads the generated file in a real headless
+  Chromium and, when the app has accounts, logs in *first* (a plausible
+  app design gates the entity UI behind login) — including a duplicate
+  username registration attempt woven into the existing wrong-password
+  check, so a broken "reject duplicates" rule gets caught for free — then
+  adds an item, edits it in place, exercises the first filterable field,
+  and deletes it, checking real DOM state at every step.
+- You get one `TestReport` per iteration in the UI ("Testing history"),
+  flagged `executed=True`/`False` so you can tell a real result from a
+  skipped one.
 - Playwright is a **dev/test-only** dependency (`requirements-dev.txt`),
   not part of the deployed app's `requirements.txt`. A bare Streamlit
   Community Cloud deployment has no browser binary available, so its
-  Testing stage will show "skipped" for HTML apps too rather than a real
-  pass/fail, until/unless a browser is set up there separately (not done
-  by this project — see `docs/PROCESS.md`).
+  Testing stage will show "skipped" rather than a real pass/fail,
+  until/unless a browser is set up there separately (not done by this
+  project — see `docs/PROCESS.md`).
 
-Every one of the six agents is a thin wrapper around one `LLMProvider`
+Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. Both `app.py` and `cli.py` default to **`OpenRouterProvider`**
 (default model: `inclusionai/ling-3.0-flash-vl:free` — see `docs/PROCESS.md`
@@ -289,10 +298,11 @@ pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider (default), AIHubMixProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
-  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. language/has_auth), QAReport, TestReport, PipelineResult
-  agents.py        Agent (ABC) + the 6 SDLC personas (incl. TesterAgent)
+  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. has_auth), QAReport, TestReport, PipelineResult
+  agents.py        Agent (ABC) + the 5 SDLC personas
   auth_contract.py the register/login element-id contract shared by DeveloperAgent's prompt and browser_tester.py
-  browser_tester.py real headless-browser auth test for HTML output (dev/test dependency, degrades gracefully)
+  crud_contract.py the per-app add/edit/delete/filter element-id contract, derived from real Requirements fields
+  browser_tester.py real headless-browser test (login, then add/edit/delete/filter) — dev/test dependency, degrades gracefully
   orchestrator.py  Orchestrator — runs the pipeline incl. the QA+Testing/Dev loop
 app.py             Streamlit UI (hero, step tracker, results, buttons) — no sidebar
 cli.py             headless runner

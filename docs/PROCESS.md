@@ -636,6 +636,86 @@ code comments — were left alone: they're plumbing a visitor never sees,
 not "context in the app," and renaming them would be a much larger,
 unrequested refactor for no visible benefit.
 
+## Round fourteen: renaming QA, and making Testing actually test the app
+
+Three things came in together: rename "QA" to "Code Review" in the app's
+own UI; make the Testing stage "explicitly test all the functionalities
+in depth," not just the login flow it covered as of Round twelve; and
+either switch every generated app to HTML+JS so logins can use
+`localStorage`, or explain why not. I asked before touching code, since
+both open questions reshape most of the file list: always HTML+JS
+(dropping the Python/other-language choice from Round nine) — confirmed;
+and "in depth" meaning real browser execution of the primary entity's
+full add/edit/delete/filter flow, not a deeper LLM prompt — also
+confirmed, over a cheaper LLM-reasoning-only alternative that wouldn't
+have been meaningfully stronger than what Code Review already does.
+
+Committing to always-HTML is what actually made the deeper testing ask
+tractable: with one guaranteed output shape, Testing needs exactly one
+real execution path instead of two (a browser for HTML, a weaker LLM
+guess for everything else) — so `TesterAgent`, the LLM-only fallback for
+non-HTML output, came out entirely, along with the Python/sqlite3 branch
+of the auth prompt it existed to justify. The Architect's prompt dropped
+the language-choice paragraph and the `language`/`file_extension` JSON
+keys; the dataclass fields stay (so `app.py`/`cli.py`'s generic
+mime-type/filename/preview code needs no changes — it just reads a field
+that now always happens to be `"html"`).
+
+The harder design problem was generalizing the login test's fixed-id
+trick to something as open-ended as "every app's fields and actions."
+Login has one fixed shape; a task tracker's fields aren't fixed at all.
+The answer, `pipeline/crud_contract.py`, derives ids from the actual
+`Requirements` object instead of hardcoding them: `field-<slugified-name>`
+per non-boolean field, one `#add-form`/`#add-submit` pair that does double
+duty for both create and edit (clicking an item's `data-action="edit"`
+just repopulates the same form), and a `#filter-<name>` select — but only
+for filters targeting a `select`-typed field with 2+ options, since that's
+the only shape a script can set and verify without guessing at the app's
+own UI conventions for something like a free-text search box. Boolean
+fields (a "completed" flag) are left out of the add-form entirely — real
+apps essentially never let you create something pre-completed — and
+aren't real-execution-tested; Code Review's text judgment still covers
+both of these gaps, same layered-testing philosophy as the auth work.
+
+Ordering mattered once accounts and CRUD had to share one browser session:
+a plausible `has_auth` app design gates its entity UI behind login, so the
+combined driver (`browser_tester.run_browser_functional_test`, replacing
+the auth-only `run_browser_auth_test`) logs in first when the app has
+accounts and only then drives the CRUD checks on that same page. Designing
+that ordering surfaced a free win: inserting one extra registration
+attempt (same username, a second password) between the original
+registration and the reload-then-login checks means a broken
+duplicate-username rule shows up as the *existing* wrong-password
+assertion failing — no new assertion, no new contract id needed to catch
+a real, previously-untested bug class.
+
+`max_qa_iterations` went from 2 to 3. Real browser execution costs no LLM
+requests at all, so the deployer's now-larger daily request budget is
+better spent on Developer retries — Testing got stricter (login *and*
+full CRUD), so more generated apps will need that second retry to
+actually clear it, and a full run's worst-case LLM call count barely
+moved (Testing used to occasionally cost one extra LLM call for non-HTML
+apps' fallback; now it costs zero, always).
+
+"QA" → "Code Review" was scoped the same way the ATA rename was: the
+stage tracker label, the "How it works" bullet, and the results panel
+caption changed; `QAReviewerAgent`, `QAReport`, the internal `"qa"` stage
+key, and the prompt text sent to the model stayed — that's plumbing a
+visitor never sees. What *did* change is what the prompt asks the model to
+check, since Code Review now grades apps against the same concrete CRUD
+contract ids the browser driver enforces, not just an abstract
+description of what QA should look for.
+
+As with every model-facing change this session, none of this proves a
+*real* OpenRouter model reliably follows the now-longer, more specific
+Developer contract — that needs a live run this sandbox still can't make.
+What's verified here is the machinery: hand-written correct and
+single-bug-injected fixtures (a broken delete handler, a login that
+accepts any password, a registration that silently overwrites) prove the
+pass/fail signal is trustworthy for each piece independently, and a full
+orchestrator run with a scripted mock model proves the combined
+auth-then-CRUD wiring drives one real browser pass end to end.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
@@ -644,13 +724,14 @@ unrequested refactor for no visible benefit.
   (OpenRouter's endpoint supports streaming) instead of waiting for the
   full reply.
 - Set up a real browser on the actual Streamlit Cloud deployment (not just
-  this dev sandbox) so the Testing stage's headless-browser auth checks
-  run there too, instead of always reporting "skipped."
+  this dev sandbox) so the Testing stage's headless-browser checks run
+  there too, instead of always reporting "skipped."
 - Give the deployer (not visitors — that sidebar UI is gone now) a small
   admin-only way to check the configured `OPENROUTER_API_KEY`/model still
   work, since the old visitor-facing "Test connection" button no longer
   exists.
-- Actually run non-HTML output (e.g. a generated Python script) somewhere
-  sandboxed and show real results instead of just syntax-highlighted
-  source — meaningfully more scope (execution environment, resource/time
-  limits, output capture) than this round's language *choice* alone.
+- Browser-test the filters and actions this round left to Code Review's
+  text judgment alone (boolean-field filters, "complete" toggles, search/
+  sort) — each needs its own answer to "what's the unambiguous testable
+  UI convention for this," the same problem `first_testable_filter`
+  solved narrowly for `select`-typed filters.

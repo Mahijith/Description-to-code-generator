@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from abc import ABC
 
-from pipeline import auth_contract
+from pipeline import auth_contract, crud_contract
 from pipeline.llm import LLMProvider
-from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements, TestReport
+from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements
 
 
 class Agent(ABC):
@@ -114,19 +114,11 @@ This is STAGE: ARCHITECT.
 Requirements: {json.dumps(requirements.to_dict())}
 
 Design the technical approach for a RAPID PROTOTYPE (not production
-software). Choose the SINGLE BEST language for THIS specific app — you are
-not restricted to any one language or platform. For example: a form-driven
-CRUD app that a person would open and click around in is usually best as
-one self-contained HTML file (inline CSS/JS, `localStorage` persistence,
-opens directly in a browser, no server); a data-processing, automation, or
-command-line-style tool described as something you'd "run" rather than
-"open" is usually better as one self-contained Python script (standard
-library only). Pick whichever matches how the app is actually meant to be
-used — do not default to HTML out of habit. Whatever you choose, the whole
-prototype must still be ONE self-contained file: no build step, no
-third-party dependencies to install, no external network calls. Decide the
-data model (how the primary entity is stored) and a short screen/output
-breakdown.
+software). It will be built as ONE self-contained HTML file: inline CSS
+and JS, `localStorage` persistence, opens directly in a browser, no
+server, no build step, no third-party dependencies, no external network
+calls. Decide the data model (how the primary entity is stored) and a
+short screen/output breakdown.
 
 Also decide whether this app's concept genuinely implies user accounts —
 each person seeing only their own saved data, an explicit sign-up/log-in,
@@ -135,10 +127,7 @@ a single shared list, a converter) — only set it true when accounts
 actually fit the concept described.
 
 Reply with ONLY a JSON object:
-{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string, "language": string, "file_extension": string, "has_auth": boolean}}
-"language" must be a Pygments-recognized language id matching your choice
-(e.g. "html", "python", "javascript"). "file_extension" must match it with
-no leading dot (e.g. "html", "py", "js")."""
+{{"tech_approach": string, "data_model_notes": string, "screen_breakdown": [string, ...], "style_notes": string, "has_auth": boolean}}"""
         data = self._ask_json("architect", prompt)
         return ArchitectureDoc.from_dict(data)
 
@@ -151,13 +140,8 @@ class DeveloperAgent(Agent):
                 "\nThe previous draft was reviewed by QA and needs these fixes:\n- "
                 + "\n- ".join(qa_feedback)
             )
-        auth_block = ""
-        if architecture.has_auth:
-            auth_block = (
-                auth_contract.DEVELOPER_PROMPT_BLOCK
-                if architecture.language == "html"
-                else auth_contract.DEVELOPER_PROMPT_BLOCK_NON_HTML
-            )
+        auth_block = auth_contract.DEVELOPER_PROMPT_BLOCK if architecture.has_auth else ""
+        crud_block = crud_contract.developer_prompt_block(requirements)
         prompt = f"""You are the Developer on a small software team.
 This is STAGE: DEVELOPER.
 
@@ -165,19 +149,17 @@ Requirements: {json.dumps(requirements.to_dict())}
 Architecture: {json.dumps(architecture.to_dict())}
 {feedback_block}
 {auth_block}
+{crud_block}
 
-Write the COMPLETE prototype as ONE self-contained {architecture.language}
-file matching the architecture above exactly: no build step, no
-third-party dependencies to install, no external network calls. Implement
-every field of the primary entity and every action listed in requirements
-(e.g. add/edit/delete/mark complete/filter/search), and show a friendly
-empty-state message or output when there's nothing to show yet. If the
-chosen language is HTML: inline CSS and JS, `localStorage` persistence,
-and render dynamic content with `textContent`, never by concatenating
-user input into `innerHTML`. For any language: never build a shell
-command, SQL query, or markup string by concatenating untrusted input —
-use safe APIs (parameterized queries, escaped/templated output, etc.)
-instead. No explanation text, no markdown fences.
+Write the COMPLETE prototype as ONE self-contained HTML file matching the
+architecture above exactly: inline CSS and JS, `localStorage`
+persistence, no build step, no third-party dependencies to install, no
+external network calls. Implement every field of the primary entity and
+every action listed in requirements (e.g. add/edit/delete/mark complete/
+filter/search), and show a friendly empty-state message when there's
+nothing to show yet. Render dynamic content with `textContent`, never by
+concatenating user input into `innerHTML`. No explanation text, no
+markdown fences.
 
 Reply with ONLY the raw source code for that one file."""
         code = self._ask("developer", prompt)
@@ -187,56 +169,26 @@ Reply with ONLY the raw source code for that one file."""
 class QAReviewerAgent(Agent):
     def review(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> QAReport:
         auth_line = f"\n{auth_contract.QA_PROMPT_ADDENDUM}" if architecture.has_auth else ""
-        prompt = f"""You are the QA Reviewer on a small software team.
+        crud_line = f"\n{crud_contract.qa_prompt_addendum(requirements)}"
+        prompt = f"""You are the Code Reviewer on a small software team.
 This is STAGE: QA.
 
 Requirements: {json.dumps(requirements.to_dict())}
 Architecture: {json.dumps(architecture.to_dict())}
-Generated prototype ({architecture.language} source):
+Generated prototype (HTML source):
 \"\"\"{code}\"\"\"
 
 Check the prototype against the requirements: is every field of the
-primary entity present as an input/parameter? Does every action (add/
-edit/delete/complete/filter/etc.) actually work in the code? Is there a
-message or output shown when there's nothing to show yet? Is user input
-handled safely for this language (no string-concatenated shell command,
-SQL query, or markup — e.g. no `innerHTML` built from untrusted input)?{auth_line}
+primary entity present as an input? Does every action (add/edit/delete/
+complete/filter/etc.) actually work in the code? Is there a message shown
+when there's nothing to show yet? Is user input handled safely (no
+`innerHTML` built from untrusted input — use `textContent` instead)?{crud_line}{auth_line}
 
 Reply with ONLY a JSON object:
 {{"passed": boolean, "issues": [string, ...]}}
 "passed" is true only if there are no issues."""
         data = self._ask_json("qa", prompt)
         return QAReport.from_dict(data)
-
-
-class TesterAgent(Agent):
-    """Runs when the app's language can't be safely executed in this
-    pipeline (anything but HTML — see browser_tester.py for the HTML
-    path). Reasons about the code with concrete synthetic test data
-    instead of proving it by actually running it.
-    """
-
-    def test(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> TestReport:
-        prompt = f"""You are the Tester on a small software team, doing a
-final pass with concrete synthetic test data before this ships.
-This is STAGE: TESTING.
-
-Requirements: {json.dumps(requirements.to_dict())}
-Architecture: {json.dumps(architecture.to_dict())}
-Generated prototype ({architecture.language} source):
-\"\"\"{code}\"\"\"
-
-Invent 2 synthetic test users (username/password) and trace through the
-code as each of them: register, then log in with the correct password
-(should succeed), then attempt to log in with a wrong password (should
-fail), then attempt to register the same username again (should be
-rejected, not silently duplicated or crashing).
-
-Reply with ONLY a JSON object:
-{{"passed": boolean, "notes": [string, ...]}}
-"passed" is true only if every one of those steps behaves correctly."""
-        data = self._ask_json("testing", prompt)
-        return TestReport.from_dict(data)
 
 
 def _strip_code_fence(text: str) -> str:

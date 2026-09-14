@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
-from pipeline.agents import TesterAgent as PipelineTesterAgent
 from pipeline.auth_contract import (
     AUTH_STATUS_ID,
     LOGIN_PASSWORD_ID,
@@ -15,14 +14,46 @@ from pipeline.auth_contract import (
     REGISTER_SUBMIT_ID,
     REGISTER_USERNAME_ID,
 )
-from pipeline.browser_tester import run_browser_auth_test
+from pipeline.browser_tester import run_browser_functional_test
 from pipeline.llm import AIHubMixProvider, LLMError, MockLLMProvider, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
+from pipeline.schema import Entity, Field, Requirements
 from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
 
-CORRECT_AUTH_HTML = f"""<!doctype html>
-<html><body>
+SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
+
+TASK_TRACKER_REQUIREMENTS = Requirements(
+    app_name="Task Tracker",
+    description="Track personal tasks with due dates and priority.",
+    entities=[
+        Entity(
+            name="Task",
+            fields=[
+                Field(name="title", type="text"),
+                Field(name="description", type="text"),
+                Field(name="due_date", type="date"),
+                Field(name="priority", type="select", options=["Low", "Medium", "High"]),
+                Field(name="completed", type="boolean"),
+            ],
+        )
+    ],
+    actions=["add", "edit", "delete", "complete", "filter"],
+    filters=["priority", "completed"],
+    screens=[],
+)
+
+# MockLLMProvider's own canned Developer output already follows the CRUD
+# contract for exactly this Requirements shape (see pipeline/llm.py) — reuse
+# it directly instead of hand-duplicating a near-identical fixture.
+GOLDEN_CRUD_HTML = MockLLMProvider().complete("STAGE: DEVELOPER")
+
+BUGGY_CRUD_DELETE_HTML = GOLDEN_CRUD_HTML.replace(
+    "save(load().filter(x => x.id !== t.id)); render();",
+    "/* delete intentionally broken for a test */",
+)
+
+_AUTH_MARKUP_AND_SCRIPT = f"""
 <input id="{REGISTER_USERNAME_ID}"><input id="{REGISTER_PASSWORD_ID}" type="password">
 <button id="{REGISTER_SUBMIT_ID}">Register</button>
 <input id="{LOGIN_USERNAME_ID}"><input id="{LOGIN_PASSWORD_ID}" type="password">
@@ -46,33 +77,21 @@ document.getElementById('{LOGIN_SUBMIT_ID}').onclick = function() {{
   document.getElementById('{AUTH_STATUS_ID}').textContent = (users[u] === p) ? ('Logged in as ' + u) : '';
 }};
 </script>
-</body></html>"""
+"""
 
-BUGGY_AUTH_HTML = f"""<!doctype html>
-<html><body>
-<input id="{REGISTER_USERNAME_ID}"><input id="{REGISTER_PASSWORD_ID}" type="password">
-<button id="{REGISTER_SUBMIT_ID}">Register</button>
-<input id="{LOGIN_USERNAME_ID}"><input id="{LOGIN_PASSWORD_ID}" type="password">
-<button id="{LOGIN_SUBMIT_ID}">Login</button>
-<div id="{AUTH_STATUS_ID}"></div>
-<script>
-function getUsers() {{ return JSON.parse(localStorage.getItem('users') || '{{}}'); }}
-function saveUsers(u) {{ localStorage.setItem('users', JSON.stringify(u)); }}
-document.getElementById('{REGISTER_SUBMIT_ID}').onclick = function() {{
-  var u = document.getElementById('{REGISTER_USERNAME_ID}').value;
-  var p = document.getElementById('{REGISTER_PASSWORD_ID}').value;
-  var users = getUsers();
-  users[u] = p;
-  saveUsers(users);
-}};
-document.getElementById('{LOGIN_SUBMIT_ID}').onclick = function() {{
-  var u = document.getElementById('{LOGIN_USERNAME_ID}').value;
-  document.getElementById('{AUTH_STATUS_ID}').textContent = 'Logged in as ' + u;
-}};
-</script>
-</body></html>"""
+# One combined "everything correct" fixture (accounts + CRUD), built by
+# splicing the auth markup/script into the already-correct CRUD fixture —
+# this is what a real generated has_auth app should look like. Bug-specific
+# variants below start from this and break exactly one thing each, so a
+# test failure is attributable to that one thing, not fixture drift.
+GOLDEN_COMBINED_HTML = GOLDEN_CRUD_HTML.replace(
+    "<h1>Task Tracker</h1>", "<h1>Task Tracker</h1>" + _AUTH_MARKUP_AND_SCRIPT
+)
 
-SAMPLE_TRANSCRIPT = Path("examples/sample_transcript.txt").read_text()
+BUGGY_LOGIN_HTML = GOLDEN_COMBINED_HTML.replace(
+    "document.getElementById('auth-status').textContent = (users[u] === p) ? ('Logged in as ' + u) : '';",
+    "document.getElementById('auth-status').textContent = 'Logged in as ' + u;",
+)
 
 
 def _real_browser_available() -> bool:
@@ -403,52 +422,112 @@ def test_qa_reviewer_includes_auth_addendum_when_has_auth():
     assert "duplicate username" in prompt.lower()
 
 
-def test_tester_agent_returns_test_report():
+def test_developer_includes_crud_contract_with_real_field_ids():
     log = []
+    DeveloperAgent(MockLLMProvider(), log).build(TASK_TRACKER_REQUIREMENTS, _dummy_architecture())
+    prompt = log[-1]["prompt"]
+    assert "field-title" in prompt
+    assert "field-due-date" in prompt
+    assert "filter-priority" in prompt
+    assert "field-completed" not in prompt  # boolean fields are excluded from the add-form
 
-    class ScriptedLLM(MockLLMProvider):
-        def complete_json(self, prompt):
-            if "STAGE: TESTING" in prompt:
-                return {"passed": False, "notes": ["duplicate registration was silently accepted"]}
-            return super().complete_json(prompt)
 
-    report = PipelineTesterAgent(ScriptedLLM(), log).test(_dummy_requirements(), _dummy_architecture(), "print('hi')")
-    assert report.passed is False
-    assert "duplicate registration" in report.notes[0]
-    assert log[-1]["stage"] == "testing"
+def test_qa_reviewer_includes_crud_addendum():
+    log = []
+    QAReviewerAgent(MockLLMProvider(), log).review(TASK_TRACKER_REQUIREMENTS, _dummy_architecture(), "<html></html>")
+    prompt = log[-1]["prompt"]
+    assert "add-form" in prompt
+    assert "item-list" in prompt
+
+
+def test_crud_contract_slugify_and_ids():
+    from pipeline import crud_contract
+
+    assert crud_contract.slugify("Due Date") == "due-date"
+    assert crud_contract.field_id("due_date") == "field-due-date"
+    assert crud_contract.filter_id("priority") == "filter-priority"
+
+
+def test_crud_contract_creatable_fields_excludes_booleans():
+    from pipeline import crud_contract
+
+    names = {f.name for f in crud_contract.creatable_fields(TASK_TRACKER_REQUIREMENTS)}
+    assert "completed" not in names
+    assert "title" in names
+
+
+def test_crud_contract_first_testable_filter_only_matches_select_with_options():
+    from pipeline import crud_contract
+
+    result = crud_contract.first_testable_filter(TASK_TRACKER_REQUIREMENTS)
+    assert result is not None
+    name, field = result
+    assert name == "priority"
+    assert field.type == "select"
 
 
 @needs_real_browser
-def test_run_browser_auth_test_passes_for_correct_contract_html():
-    report = run_browser_auth_test(CORRECT_AUTH_HTML)
+def test_run_browser_functional_test_passes_when_everything_is_correct():
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, True, GOLDEN_COMBINED_HTML)
     assert report.executed is True
     assert report.passed is True
 
 
 @needs_real_browser
-def test_run_browser_auth_test_fails_when_wrong_password_is_accepted():
-    report = run_browser_auth_test(BUGGY_AUTH_HTML)
+def test_run_browser_functional_test_fails_when_wrong_password_is_accepted():
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, True, BUGGY_LOGIN_HTML)
     assert report.executed is True
     assert report.passed is False
-    assert any("wrong password" in note.lower() for note in report.notes)
+    assert any("must be rejected" in note.lower() for note in report.notes)
 
 
 @needs_real_browser
-def test_run_browser_auth_test_reports_missing_contract_ids():
-    report = run_browser_auth_test("<!doctype html><html><body>no auth here</body></html>")
+def test_run_browser_functional_test_fails_when_delete_is_broken():
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, False, BUGGY_CRUD_DELETE_HTML)
+    assert report.executed is True
+    assert report.passed is False
+    assert any("still present" in note.lower() for note in report.notes)
+
+
+@needs_real_browser
+def test_run_browser_functional_test_reports_missing_auth_ids():
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, True, "<!doctype html><html><body>empty</body></html>")
     assert report.executed is True
     assert report.passed is False
 
 
-def test_run_browser_auth_test_degrades_gracefully_without_a_real_browser():
+@needs_real_browser
+def test_run_browser_functional_test_reports_missing_crud_ids():
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, False, "<!doctype html><html><body>empty</body></html>")
+    assert report.executed is True
+    assert report.passed is False
+
+
+@needs_real_browser
+def test_run_browser_functional_test_skips_crud_gracefully_with_no_creatable_fields():
+    boolean_only = Requirements(
+        app_name="Checklist",
+        description="d",
+        entities=[Entity(name="Item", fields=[Field(name="done", type="boolean")])],
+        actions=["complete"],
+        filters=[],
+        screens=[],
+    )
+    report = run_browser_functional_test(boolean_only, False, "<!doctype html><html><body><form id=\"add-form\"></form></body></html>")
+    assert report.executed is True
+    assert report.passed is True
+    assert any("wasn't executed" in note.lower() for note in report.notes)
+
+
+def test_run_browser_functional_test_degrades_gracefully_without_a_real_browser():
     if REAL_BROWSER_AVAILABLE:
         pytest.skip("a real browser is available in this environment; the degrade path isn't exercised")
-    report = run_browser_auth_test(CORRECT_AUTH_HTML)
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, True, GOLDEN_COMBINED_HTML)
     assert report.executed is False
     assert report.passed is True
 
 
-def test_orchestrator_defaults_to_two_iterations_now():
+def test_orchestrator_defaults_to_three_iterations_now():
     class AlwaysFailLLM(MockLLMProvider):
         def complete_json(self, prompt):
             if "STAGE: QA" in prompt:
@@ -457,17 +536,17 @@ def test_orchestrator_defaults_to_two_iterations_now():
 
     orchestrator = Orchestrator(AlwaysFailLLM())  # no max_qa_iterations kwarg — pins the new default
     result = orchestrator.run(SAMPLE_TRANSCRIPT)
-    assert result.iterations == 2
+    assert result.iterations == 3
 
 
-def test_orchestrator_skips_testing_when_no_auth():
-    orchestrator = Orchestrator(MockLLMProvider(), max_qa_iterations=2)
+@needs_real_browser
+def test_orchestrator_runs_crud_test_even_without_auth():
+    orchestrator = Orchestrator(MockLLMProvider())
     result = orchestrator.run(SAMPLE_TRANSCRIPT)
-    assert result.test_reports
-    for test_report in result.test_reports:
-        assert test_report.executed is False
-        assert test_report.passed is True
-        assert "skipped" in test_report.notes[0].lower()
+    assert result.architecture.has_auth is False
+    last_test = result.test_reports[-1]
+    assert last_test.executed is True
+    assert last_test.passed is True
 
 
 @needs_real_browser
@@ -481,7 +560,7 @@ def test_orchestrator_runs_real_browser_test_when_html_app_has_auth():
 
         def complete(self, prompt):
             if "STAGE: DEVELOPER" in prompt and REGISTER_USERNAME_ID in prompt:
-                return CORRECT_AUTH_HTML
+                return GOLDEN_COMBINED_HTML
             return super().complete(prompt)
 
     orchestrator = Orchestrator(AuthAppLLM())
@@ -493,8 +572,6 @@ def test_orchestrator_runs_real_browser_test_when_html_app_has_auth():
 
 
 def _dummy_requirements():
-    from pipeline.schema import Entity, Field, Requirements
-
     return Requirements(
         app_name="Test",
         description="d",

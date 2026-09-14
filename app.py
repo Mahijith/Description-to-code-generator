@@ -96,7 +96,7 @@ STAGE_NODES = [
     ("requirements", "Requirements"),
     ("architect", "Architect"),
     ("developer", "Developer"),
-    ("qa", "QA Review"),
+    ("qa", "Code Review"),
     ("testing", "Testing"),
     ("pm_summary", "Sign-off"),
 ]
@@ -135,7 +135,7 @@ with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
     st.title("ATA System")
-    st.caption("A 6-agent SDLC pipeline turns an audio or video description into a working prototype.")
+    st.caption("A 5-agent SDLC pipeline, plus a real browser-testing stage, turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
     + "".join(f"<span class='badge'>{label}</span>" for _, label in STAGE_NODES)
@@ -145,16 +145,16 @@ st.markdown(
 
 with st.expander("How it works"):
     st.markdown(
-        "Six agents mirror a small software team:\n\n"
+        "Five agents mirror a small software team, plus a real automated Testing stage:\n\n"
         "1. **Project Manager** — writes a brief, and signs off at the end\n"
         "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
-        "3. **Architect** — picks the best language for this app, the technical approach, "
-        "and whether it needs user accounts\n"
+        "3. **Architect** — plans the technical approach and whether it needs user accounts\n"
         "4. **Developer** — writes the prototype (with registration/login when the app calls for it)\n"
-        "5. **QA Reviewer** — checks it against requirements and reports what it finds\n"
-        "6. **Tester** — tries registration/login with a synthetic user before it ships\n\n"
-        "Up to two build → review → test passes — if QA or Testing finds something on the "
-        "first pass, the Developer gets one chance to fix it, then whatever's produced ships "
+        "5. **Code Reviewer** — checks it against requirements and reports what it finds\n"
+        "6. **Testing** — actually runs the app in a real browser: adds, edits, deletes, and "
+        "filters an item, plus registration/login when it has accounts\n\n"
+        "Up to three build → review → test passes — if Code Review or Testing finds something, "
+        "the Developer gets up to two more chances to fix it, then whatever's produced ships "
         "either way. Click Regenerate for a fresh attempt any time. Access is already "
         "configured by whoever deployed this app — nothing to enter here."
     )
@@ -305,7 +305,7 @@ if "result" in st.session_state:
         with st.expander("Architecture", expanded=False):
             st.json(result.architecture.to_dict())
         with st.container(border=True):
-            st.caption(f"QA history — {result.iterations} iteration(s)")
+            st.caption(f"Code review history — {result.iterations} iteration(s)")
             for i, qa in enumerate(result.qa_reports, start=1):
                 st.write(f"Pass {i}: {'✅ passed' if qa.passed else '⚠️ issues found'}")
                 for issue in qa.issues:

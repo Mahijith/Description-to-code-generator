@@ -1,10 +1,9 @@
 """Single source of truth for the "app has accounts" testability contract.
 
 When ArchitectAgent decides an app needs registration/login, DeveloperAgent
-is instructed (for HTML output) to wire up exactly these element ids, and
-browser_tester.py drives those same ids with a headless browser. Keeping
-both sides here means the prompt text and the Playwright selectors can
-never drift apart.
+is instructed to wire up exactly these element ids, and browser_tester.py
+drives those same ids with a headless browser. Keeping both sides here
+means the prompt text and the Playwright selectors can never drift apart.
 """
 
 from __future__ import annotations
@@ -37,19 +36,9 @@ these ids and behaviors are exact):
   registered username before login or after a failed attempt.
 """
 
-DEVELOPER_PROMPT_BLOCK_NON_HTML = """
-This app needs basic user accounts. Use Python's built-in `sqlite3`
-module to store accounts in a small local database file created next to
-the script (no extra dependency — it's part of the standard library), so
-registered users are still there the next time the script runs. Reject a
-duplicate username on registration, and reject a wrong password on login,
-in both cases with a clear message rather than a crash.
-"""
-
 QA_PROMPT_ADDENDUM = (
     "This app has accounts: does registration reject a duplicate "
     f"username? Does login reject a wrong password? Does #{AUTH_STATUS_ID} "
-    "correctly reflect logged-in/logged-out state? Does the chosen storage "
-    "(localStorage for HTML, sqlite3 for Python) actually persist accounts "
-    "rather than losing them on reload/restart?"
+    "correctly reflect logged-in/logged-out state? Does localStorage "
+    "actually persist accounts rather than losing them on reload?"
 )

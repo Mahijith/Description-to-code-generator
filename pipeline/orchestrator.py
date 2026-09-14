@@ -1,31 +1,25 @@
 """Wires the agents together and runs the SDLC pipeline, including the
-QA + Testing -> Developer feedback loop (bounded by max_qa_iterations,
-default 2 — one Developer pass, then a second pass if QA or Testing found
-something to fix, then whatever's produced ships either way). The Testing
-stage only does anything when the app has accounts (ArchitectureDoc.has_auth):
-for HTML output it drives a real headless browser through register/login
-with a synthetic user (see browser_tester.py); for anything else it falls
-back to an LLM reasoning through the code (no safe way to execute arbitrary
-generated code for other languages here). A longer description or a slower
-free model still makes each extra round-trip a real chance to hit a rate
-limit, timeout, or truncation — max_qa_iterations stays a small, explicit
-cap rather than an unbounded retry loop, even now that it also covers
-Testing.
+Code Review + Testing -> Developer feedback loop (bounded by
+max_qa_iterations, default 3 — the Developer gets up to two retries if
+Code Review or Testing found something to fix, then whatever's produced
+ships either way). Every app is one self-contained HTML file (see
+ArchitectAgent), so Testing always drives a real headless browser through
+the app's core add/edit/delete/filter flow (pipeline/crud_contract.py),
+plus registration/login when the app has accounts
+(ArchitectureDoc.has_auth, pipeline/auth_contract.py) — see
+browser_tester.py. Real execution costs no LLM requests at all, so the
+iteration cap is sized around the LLM calls only: a longer description or
+a slower free model still makes each extra round-trip a real chance to
+hit a rate limit, timeout, or truncation, so it stays a small, explicit
+cap rather than an unbounded retry loop.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
-from pipeline.agents import (
-    ArchitectAgent,
-    DeveloperAgent,
-    ProjectManagerAgent,
-    QAReviewerAgent,
-    RequirementsAnalystAgent,
-    TesterAgent,
-)
-from pipeline.browser_tester import run_browser_auth_test
+from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
+from pipeline.browser_tester import run_browser_functional_test
 from pipeline.llm import LLMProvider
 from pipeline.schema import ArchitectureDoc, PipelineResult, QAReport, Requirements, TestReport
 
@@ -34,7 +28,7 @@ StageCallback = Callable[[str, str], None]  # (stage_name, status) -> None
 
 
 class Orchestrator:
-    def __init__(self, llm: LLMProvider, max_qa_iterations: int = 2):
+    def __init__(self, llm: LLMProvider, max_qa_iterations: int = 3):
         self._max_qa_iterations = max_qa_iterations
         self.prompt_log: list[dict] = []
         self._pm = ProjectManagerAgent(llm, self.prompt_log)
@@ -42,14 +36,9 @@ class Orchestrator:
         self._architect = ArchitectAgent(llm, self.prompt_log)
         self._developer = DeveloperAgent(llm, self.prompt_log)
         self._qa = QAReviewerAgent(llm, self.prompt_log)
-        self._tester = TesterAgent(llm, self.prompt_log)
 
     def _run_tests(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> TestReport:
-        if not architecture.has_auth:
-            return TestReport(passed=True, executed=False, notes=["No accounts in this app; testing stage skipped."])
-        if architecture.language == "html":
-            return run_browser_auth_test(code)
-        return self._tester.test(requirements, architecture, code)
+        return run_browser_functional_test(requirements, architecture.has_auth, code)
 
     def run(self, transcript: str, on_stage: StageCallback | None = None) -> PipelineResult:
         def notify(stage: str, status: str) -> None:

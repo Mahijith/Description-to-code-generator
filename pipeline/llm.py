@@ -278,8 +278,6 @@ class MockLLMProvider(LLMProvider):
                 "data_model_notes": "One array of task objects keyed by a generated id, stored under one localStorage key.",
                 "screen_breakdown": ["Task List (form + filterable table)"],
                 "style_notes": "Clean, minimal, readable at 400px width.",
-                "language": "html",
-                "file_extension": "html",
                 "has_auth": False,
             }
         if "STAGE: QA" in prompt:
@@ -294,64 +292,85 @@ class MockLLMProvider(LLMProvider):
         empty_state_markup = (
             '<p class="empty-state" hidden>No tasks yet — add one above.</p>' if needs_empty_state else ""
         )
+        # Field/filter ids below match pipeline.crud_contract's slugify()
+        # exactly (e.g. "due_date" -> "due-date") — this fixture exists so
+        # the orchestrator's real browser-driven CRUD test has something
+        # deterministic and correct to exercise end to end.
         return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Task Tracker</title>
 <style>body{{font-family:sans-serif;max-width:640px;margin:2rem auto;padding:0 1rem}}
 .empty-state{{color:#666}}</style></head>
 <body>
 <h1>Task Tracker</h1>
-<form id="taskForm">
-  <input name="title" placeholder="title" required>
-  <input name="description" placeholder="description">
-  <input name="due_date" type="date">
-  <select name="priority"><option>Low</option><option>Medium</option><option>High</option></select>
-  <button type="submit">add</button>
+<form id="add-form">
+  <input id="field-title" placeholder="title" required>
+  <input id="field-description" placeholder="description">
+  <input id="field-due-date" type="date">
+  <select id="field-priority"><option>Low</option><option>Medium</option><option>High</option></select>
+  <button type="submit" id="add-submit">Add</button>
 </form>
-<select id="filterPriority"><option value="">All priorities</option><option>Low</option><option>Medium</option><option>High</option></select>
-<ul id="taskList"></ul>
+<select id="filter-priority"><option value="">All priorities</option><option>Low</option><option>Medium</option><option>High</option></select>
+<ul id="item-list"></ul>
 {empty_state_markup}
 <script>
 const KEY = "tasks";
+let editingId = null;
 const load = () => JSON.parse(localStorage.getItem(KEY) || "[]");
 const save = (tasks) => localStorage.setItem(KEY, JSON.stringify(tasks));
 function render() {{
-  const filter = document.getElementById("filterPriority").value;
+  const filter = document.getElementById("filter-priority").value;
   const tasks = load().filter(t => !filter || t.priority === filter);
-  const list = document.getElementById("taskList");
+  const list = document.getElementById("item-list");
   list.textContent = "";
   const empty = document.querySelector(".empty-state");
   if (empty) empty.hidden = tasks.length !== 0;
   for (const t of tasks) {{
     const li = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${{t.title}} (${{t.priority}})${{t.completed ? " [complete]" : ""}}`;
+    label.textContent = `${{t.title}} - ${{t.description}} (${{t.due_date}}, ${{t.priority}})${{t.completed ? " [complete]" : ""}}`;
     const completeBtn = document.createElement("button");
     completeBtn.textContent = "complete";
     completeBtn.onclick = () => {{ t.completed = !t.completed; save(load().map(x => x.id === t.id ? t : x)); render(); }};
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "edit";
+    editBtn.setAttribute("data-action", "edit");
+    editBtn.onclick = () => {{
+      editingId = t.id;
+      document.getElementById("field-title").value = t.title;
+      document.getElementById("field-description").value = t.description;
+      document.getElementById("field-due-date").value = t.due_date;
+      document.getElementById("field-priority").value = t.priority;
+      document.getElementById("add-submit").textContent = "Save";
+    }};
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "delete";
+    deleteBtn.setAttribute("data-action", "delete");
     deleteBtn.onclick = () => {{ save(load().filter(x => x.id !== t.id)); render(); }};
-    li.append(label, completeBtn, deleteBtn);
+    li.append(label, completeBtn, editBtn, deleteBtn);
     list.append(li);
   }}
 }}
-document.getElementById("taskForm").addEventListener("submit", (e) => {{
+document.getElementById("add-form").addEventListener("submit", (e) => {{
   e.preventDefault();
-  const form = new FormData(e.target);
-  const tasks = load();
-  tasks.push({{
-    id: crypto.randomUUID(),
-    title: form.get("title"),
-    description: form.get("description"),
-    due_date: form.get("due_date"),
-    priority: form.get("priority"),
-    completed: false,
-  }});
+  const values = {{
+    title: document.getElementById("field-title").value,
+    description: document.getElementById("field-description").value,
+    due_date: document.getElementById("field-due-date").value,
+    priority: document.getElementById("field-priority").value,
+  }};
+  let tasks = load();
+  if (editingId) {{
+    tasks = tasks.map(t => t.id === editingId ? {{...t, ...values}} : t);
+    editingId = null;
+    document.getElementById("add-submit").textContent = "Add";
+  }} else {{
+    tasks.push({{ id: crypto.randomUUID(), completed: false, ...values }});
+  }}
   save(tasks);
   e.target.reset();
   render();
 }});
-document.getElementById("filterPriority").addEventListener("change", render);
+document.getElementById("filter-priority").addEventListener("change", render);
 render();
 </script>
 </body></html>"""
