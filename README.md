@@ -116,7 +116,13 @@ real:
   pre-completed — and aren't real-execution-tested; Code Review's text
   judgment still covers them, along with any filter that doesn't target a
   `select`-typed field (there's no unambiguous way to browser-test a
-  free-text filter's UI convention).
+  free-text filter's UI convention), and any entity beyond the first one
+  the Requirements Analyst extracted (only `entities[0]` gets a fixed-id
+  contract). The contract also requires `#add-form`/`#item-list` to be
+  visible without any navigation first — a real generated multi-screen
+  app once hid its primary entity's form behind a sidebar click, which
+  surfaced as an opaque test timeout rather than a real failure until
+  `browser_tester.py` started checking visibility explicitly.
 - `pipeline/browser_tester.py` loads the generated file in a real headless
   Chromium and, when the app has accounts, logs in *first* (a plausible
   app design gates the entity UI behind login) — including a duplicate

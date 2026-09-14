@@ -132,6 +132,11 @@ behaviors are exact):
   create a new one.
 - Clicking an item's data-action="delete" control must remove it from
   #{ITEM_LIST_ID}.
+- #{ADD_FORM_ID} and #{ITEM_LIST_ID} must both be visible without any
+  navigation, tab click, or screen switch (logging in first is fine, if
+  this app has accounts — but no additional click after that). If your
+  app has multiple screens/sections, put the primary entity's management
+  UI on the default one shown at load.
 {filters_paragraph}
 Checkbox/boolean fields on the primary entity (if any) don't belong in
 #{ADD_FORM_ID} — expose them however fits the app, e.g. a toggle per item.

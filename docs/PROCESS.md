@@ -820,6 +820,61 @@ running Playwright on the actual Streamlit Cloud deployment (fragile,
 flagged as out of scope back in Round twelve) is a decision for the
 deployer, not something to change unilaterally while fixing a layout bug.
 
+## Round seventeen: compiling every edge case this session surfaced and running them
+
+The deployer asked directly: take everything found so far and actually
+run it against the app, rather than treating each finding as closed once
+diagnosed. Compiled a list from this session's own history — non-entity
+apps, multi-entity apps, id-collision-prone field names, malformed
+`localStorage`-shim inputs, filter lists with an ineligible field first,
+select fields with duplicate option values — and ran each one directly
+against the real pipeline code, not just discussed them. Two were
+already correctly handled (a multi-filter list with an ineligible first
+entry correctly falls through to the next eligible one; a select field
+with duplicate option values gracefully skips the filter check instead
+of crashing, via existing defensive code). Two were real, newly-found
+bugs, both fixed:
+
+**The CRUD test's own methodology had a false-negative gap.** Running
+Round sixteen's actual buggy rent-management app through
+`run_browser_functional_test` (with `PLAYWRIGHT_CHROMIUM_EXECUTABLE` set
+so it could really execute) didn't fail with the JS-syntax-error signal
+expected — it failed on a Playwright timeout trying to fill `#field-name`,
+because that app's Tenants section is hidden behind a sidebar-nav click,
+and the CRUD phase has always assumed the primary entity's form is
+visible on load. Isolating the two issues (temporarily making the
+Tenants screen the default one) confirmed the pageerror-based syntax
+check *does* work correctly on its own — but the visibility assumption
+is a real, previously-undocumented gap that would make a genuinely
+well-built multi-screen app (exactly what "build to the best of your
+ability" now encourages) fail Testing for a reason that has nothing to
+do with a real bug. Fixed two ways: `crud_contract.developer_prompt_block`
+now explicitly requires `#add-form`/`#item-list` to be visible without
+navigation, and `browser_tester.py`'s auth and CRUD phases now check
+`is_visible()` before attempting to interact, turning what used to be an
+opaque 5-second-timeout crash into an immediate, specific, actionable
+note either way.
+
+**`isolate_local_storage` searched for a substring that isn't reliably
+unique.** Built a deliberately adversarial case — a script containing the
+literal text `"<body class=nope>fake</body>"` inside a JS string, before
+the real `<body>` tag — and confirmed the shim landed inside that fake
+match, corrupting the script. The fix removes the search entirely: the
+shim is now unconditionally prepended before the whole document (even
+before `<!doctype html>`), which a direct check confirmed still executes
+before any other inline script in document order — simpler than the
+substring search it replaced, and structurally can't be fooled by
+content that merely looks like the tag it was looking for.
+
+One finding was flagged but not fixed: `crud_contract.field_id` slugifies
+"Due Date," "due_date," and "due-date" to the identical `field-due-date`
+— if the Requirements Analyst ever extracted two distinct fields whose
+names differ only in separator/case, their ids would collide. Left as a
+documented, low-priority gap rather than adding disambiguation logic:
+it requires the model to propose two near-duplicate field names for the
+same entity, which is unlikely, and the failure mode if it did happen is
+a wrong-field read in a test, not a crash.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
@@ -844,3 +899,12 @@ deployer, not something to change unilaterally while fixing a layout bug.
   Developer can expose for apps whose functionality can't be derived into
   a fixed contract, without going back to trusting an LLM's unverified
   opinion of its own code.
+- Disambiguate `crud_contract.field_id` when two distinct field names
+  slugify to the same id (Round seventeen) — track ids already used per
+  entity and append a suffix on collision, in both the Developer prompt
+  and the browser driver so they'd still agree.
+- Extend real-execution testing to a second/third entity when
+  `Requirements.entities` has more than one (Round seventeen's rent-
+  management app had four) — right now only `entities[0]` gets any
+  fixed-id contract or browser coverage; the rest rely on Code Review's
+  text judgment alone, the same layered-testing gap as boolean filters.

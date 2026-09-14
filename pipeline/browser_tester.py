@@ -138,8 +138,14 @@ def _drive_smoke_test(page) -> tuple[bool, list[str]]:
 
 
 def _drive_auth_phase(page, url: str) -> tuple[bool, list[str]]:
-    if page.locator(f"#{REGISTER_USERNAME_ID}").count() == 0:
+    register_username = page.locator(f"#{REGISTER_USERNAME_ID}")
+    if register_username.count() == 0:
         return False, [f"Missing #{REGISTER_USERNAME_ID} — cannot test registration/login."]
+    if not register_username.is_visible():
+        return False, [
+            f"#{REGISTER_USERNAME_ID} exists but isn't visible on load — it must be "
+            "reachable without any navigation, tab click, or screen switch first."
+        ]
 
     notes: list[str] = []
 
@@ -197,8 +203,14 @@ def _auth_status_text(page) -> str:
 
 
 def _drive_crud_phase(page, requirements: Requirements) -> tuple[bool, list[str]]:
-    if page.locator(f"#{crud_contract.ADD_FORM_ID}").count() == 0:
+    add_form = page.locator(f"#{crud_contract.ADD_FORM_ID}")
+    if add_form.count() == 0:
         return False, [f"Missing #{crud_contract.ADD_FORM_ID} — cannot test add/edit/delete."]
+    if not add_form.is_visible():
+        return False, [
+            f"#{crud_contract.ADD_FORM_ID} exists but isn't visible on load — it must be "
+            "reachable without any navigation, tab click, or screen switch first."
+        ]
 
     fields = crud_contract.creatable_fields(requirements)
     if not fields:

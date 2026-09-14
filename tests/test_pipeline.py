@@ -470,6 +470,8 @@ def test_developer_includes_crud_contract_with_real_field_ids():
     assert "field-due-date" in prompt
     assert "filter-priority" in prompt
     assert "field-completed" not in prompt  # boolean fields are excluded from the add-form
+    normalized = " ".join(prompt.lower().split())
+    assert "visible without any navigation" in normalized
 
 
 def test_qa_reviewer_includes_crud_addendum():
@@ -561,6 +563,27 @@ def test_run_browser_functional_test_reports_missing_crud_ids():
 
 
 @needs_real_browser
+def test_run_browser_functional_test_reports_a_clear_reason_when_add_form_is_hidden():
+    # A real generated app hid its primary entity's form behind a
+    # multi-screen nav (the default "screen" wasn't the one with the
+    # form) — the test used to just time out waiting to fill a hidden
+    # field, surfacing as an opaque "Browser test crashed" instead of a
+    # clear, specific reason. This pins the fix: a present-but-hidden
+    # #add-form is now reported immediately and specifically.
+    html = """<!doctype html><html><body>
+<div id="screen-a" style="display:block"><p>Screen A</p></div>
+<div id="screen-b" style="display:none">
+  <form id="add-form"><input id="field-title"><button id="add-submit">Add</button></form>
+  <ul id="item-list"></ul>
+</div>
+</body></html>"""
+    report = run_browser_functional_test(TASK_TRACKER_REQUIREMENTS, False, html)
+    assert report.executed is True
+    assert report.passed is False
+    assert any("exists but isn't visible" in note.lower() for note in report.notes)
+
+
+@needs_real_browser
 def test_run_browser_functional_test_skips_crud_gracefully_with_no_creatable_fields():
     boolean_only = Requirements(
         app_name="Checklist",
@@ -570,7 +593,13 @@ def test_run_browser_functional_test_skips_crud_gracefully_with_no_creatable_fie
         filters=[],
         screens=[],
     )
-    report = run_browser_functional_test(boolean_only, False, "<!doctype html><html><body><form id=\"add-form\"></form></body></html>")
+    # A real add-form always has visible input fields; give this one a
+    # visible label so it has an actual layout box (an empty <form> has
+    # zero size, which Playwright's is_visible() correctly treats as not
+    # visible — a real, if incidental, gap in this test fixture, not in
+    # the visibility check itself).
+    html = '<!doctype html><html><body><form id="add-form">not empty</form></body></html>'
+    report = run_browser_functional_test(boolean_only, False, html)
     assert report.executed is True
     assert report.passed is True
     assert any("wasn't executed" in note.lower() for note in report.notes)
@@ -710,17 +739,32 @@ def test_isolate_local_storage_keeps_different_run_ids_apart(tmp_path):
         browser.close()
 
 
-def test_isolate_local_storage_handles_body_with_attributes():
-    html = '<html><body class="x" data-y="1"><p>hi</p></body></html>'
+def test_isolate_local_storage_prepends_before_everything():
+    html = '<!doctype html><html><body class="x" data-y="1"><p>hi</p></body></html>'
     result = isolate_local_storage(html, "abc")
-    assert result.index("<script>") > result.index('<body class="x" data-y="1">')
+    assert result.startswith("<script>")
+    assert result.index("<script>") < result.index("<!doctype html>")
 
 
-def test_isolate_local_storage_falls_back_when_no_body_tag():
+def test_isolate_local_storage_works_with_no_body_tag():
     html = "<p>no body tag here</p>"
     result = isolate_local_storage(html, "abc")
     assert result.startswith("<script>")
     assert "no body tag here" in result
+
+
+def test_isolate_local_storage_is_not_confused_by_a_fake_body_tag_in_a_script_string():
+    # A generated app building HTML via a JS template string can easily
+    # contain the literal substring "<body" somewhere that isn't the real
+    # tag — searching the text for it (the old implementation) landed the
+    # shim inside that string instead, corrupting the script. Confirmed
+    # directly before fixing; this pins the fix by construction: the new
+    # implementation never searches for "<body" at all, so this can't
+    # recur regardless of where such a substring appears.
+    html = '<html><head><script>var tpl = "<body class=nope>fake</body>";</script></head><body><p>real</p></body></html>'
+    result = isolate_local_storage(html, "abc")
+    assert result.startswith("<script>")
+    assert 'var tpl = "<body class=nope>fake</body>";' in result
 
 
 def _dummy_requirements():
