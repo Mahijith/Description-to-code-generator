@@ -270,6 +270,7 @@ class MockLLMProvider(LLMProvider):
                 ],
                 "actions": ["add", "edit", "delete", "complete", "filter"],
                 "filters": ["priority", "completed"],
+                "features": [],
                 "screens": [{"name": "Task List", "purpose": "View, add, edit and filter tasks"}],
             }
         if "STAGE: ARCHITECT" in prompt:

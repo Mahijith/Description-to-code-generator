@@ -8,12 +8,14 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 import streamlit as st
 
 from pipeline.llm import DEFAULT_MODEL, LLMError, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
+from pipeline.preview import isolate_local_storage
 from pipeline.secrets import Secrets
 from pipeline.transcribe import TranscriptionError, make_transcriber_for
 
@@ -153,12 +155,15 @@ with st.expander("How it works"):
     st.markdown(
         "Five agents mirror a small software team, plus a real automated Testing stage:\n\n"
         "1. **Project Manager** — writes a brief, and signs off at the end\n"
-        "2. **Requirements Analyst** — extracts entities, fields, and actions\n"
+        "2. **Requirements Analyst** — extracts whatever the app actually needs: entities "
+        "and actions for a records-list app, freeform features for anything else (a tool, "
+        "a game, a converter), or a mix\n"
         "3. **Architect** — plans the technical approach and whether it needs user accounts\n"
-        "4. **Developer** — writes the prototype (with registration/login when the app calls for it)\n"
+        "4. **Developer** — builds it, in whatever shape actually fits — no fixed template\n"
         "5. **Code Reviewer** — checks it against requirements and reports what it finds\n"
-        "6. **Testing** — actually runs the app in a real browser: adds, edits, deletes, and "
-        "filters an item, plus registration/login when it has accounts\n\n"
+        "6. **Testing** — actually runs the app in a real browser: registration/login when it "
+        "has accounts, add/edit/delete/filter when it manages records, or a load/render check "
+        "for anything else\n\n"
         "Up to three build → review → test passes — if Code Review or Testing finds something, "
         "the Developer gets up to two more chances to fix it, then whatever's produced ships "
         "either way. Click Regenerate for a fresh attempt any time. Access is already "
@@ -246,6 +251,11 @@ def _run_pipeline(transcript: str) -> None:
         return
     st.session_state["result"] = result
     st.session_state["last_transcript"] = transcript
+    # A fresh id per successful generation (including Regenerate) so the
+    # live preview's localStorage never carries over data from a previous,
+    # unrelated generation shown earlier in this same browser tab — see
+    # pipeline/preview.py.
+    st.session_state["preview_run_id"] = uuid.uuid4().hex
 
 
 if generate:
@@ -328,7 +338,8 @@ if "result" in st.session_state:
         extension = result.architecture.file_extension
         if language == "html":
             st.caption("Live preview")
-            st.components.v1.html(result.code, height=340, scrolling=True)
+            preview_run_id = st.session_state.get("preview_run_id", "0")
+            st.iframe(isolate_local_storage(result.code, preview_run_id), height=340)
         else:
             st.caption(f"Generated {language} source")
             st.code(result.code, language=language, height=340)

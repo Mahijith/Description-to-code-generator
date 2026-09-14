@@ -79,6 +79,7 @@ class Requirements:
     entities: list[Entity] = field(default_factory=list)
     actions: list[str] = field(default_factory=list)
     filters: list[str] = field(default_factory=list)
+    features: list[str] = field(default_factory=list)  # freeform capabilities for apps that aren't a records list
     screens: list[Screen] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -88,6 +89,7 @@ class Requirements:
             "entities": [e.to_dict() for e in self.entities],
             "actions": self.actions,
             "filters": self.filters,
+            "features": self.features,
             "screens": [s.to_dict() for s in self.screens],
         }
 
@@ -99,6 +101,7 @@ class Requirements:
             entities=[Entity.from_dict(e) for e in (data.get("entities") or [])],
             actions=list(data.get("actions", []) or []),
             filters=list(data.get("filters", []) or []),
+            features=list(data.get("features", []) or []),
             screens=[Screen.from_dict(s) for s in (data.get("screens") or [])],
         )
 

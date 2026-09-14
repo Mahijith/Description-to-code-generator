@@ -716,6 +716,67 @@ pass/fail signal is trustworthy for each piece independently, and a full
 orchestrator run with a scripted mock model proves the combined
 auth-then-CRUD wiring drives one real browser pass end to end.
 
+## Round fifteen: a CLAUDE.md, and auditing the app against it
+
+The deployer wrote a `CLAUDE.md` stating this project's Goal, Scope, and
+Process plainly, and asked for a rework of the app using it as the
+reference — not a vague "improve things," a specific instruction to check
+the app against three concrete sentences. That's what this round actually
+was: an audit against each one, producing three fixes, not a rewrite.
+
+**Process** ("no particular restriction or shape") was already
+diagnosed as broken by then: the deployer had asked for "a code debugging
+application" and gotten a rent-management app back. Reading
+`RequirementsAnalystAgent`'s prompt found why — it said to "identify the
+single primary entity being managed... its fields, the actions... any
+filters," as if every app manages a records list. A debugging aid doesn't.
+Forced to invent one, the model fell back on a generic disconnected
+template. The fix: the prompt now branches — an entity for a records-list
+app, a new freeform `Requirements.features` list for anything else, a mix
+when genuinely true, and an explicit instruction never to invent an entity
+to fill the shape. `DeveloperAgent`/`QAReviewerAgent` stopped assuming an
+entity exists too. This also exposed and fixed a second, purely mechanical
+bug in `browser_tester.py`: Testing's CRUD phase ran unconditionally, so
+an app with correctly *no* entity (because the Developer was correctly
+never told to build one) was failing Testing outright for lacking a form
+it was never supposed to have. Apps with neither an entity nor accounts
+now get a generic smoke test instead — load the page for real, fail on
+any uncaught JS error, confirm visible content rendered. Honestly scoped:
+this proves a page didn't silently fail to load, not that a bespoke
+feature like "step through code line by line" is correct.
+
+**Scope** ("every functionality working in the preview... exactly what
+they're getting") turned up a bug nobody had reported yet — found by
+re-reading that sentence literally and asking "does the preview actually
+guarantee that?" It doesn't: `st.components.v1.html` renders the app in a
+`srcdoc` iframe with same-origin access to the Streamlit app itself (its
+own docstring says so), and same origin means one shared `localStorage`.
+Generate a task tracker, then regenerate a totally different app that
+happens to also use `localStorage.setItem("tasks", ...)` — a very common
+key — and the second preview can show, or corrupt, data from the first.
+That's the opposite of "exactly what they're getting." This is the first
+finding this session that came from actually running the app rather than
+reading its source: a two-line Streamlit probe plus a Playwright script
+confirmed the leak directly, and confirmed the fix (a namespaced
+`localStorage` shim). It also caught something reading the code would
+never have shown: `window.localStorage = shim` **silently does nothing**
+in Chromium — no error, just no effect — and `Object.defineProperty`
+is required instead. Both findings are checked into
+`pipeline/preview.py`'s `isolate_local_storage`, unit-tested with real
+Playwright, and wired into `app.py` so only the *preview* copy is
+namespaced (per a fresh id each generation) — the download button still
+serves the real, unmodified file, since a real deployed app should have
+real, permanent storage.
+
+**Goal** ("an application the user can actually use") was at quiet risk
+independent of any bug report: `st.components.v1.html`'s own deprecation
+notice says removal after 2026-06-01, which has already passed by the
+time of this round, and `requirements.txt` pins no Streamlit upper bound.
+Migrated to `st.iframe`, the documented replacement — same same-origin
+behavior (so the storage fix above is still necessary after migrating),
+confirmed directly from its docstring in the installed version rather
+than assumed from changelog text.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
@@ -735,3 +796,8 @@ auth-then-CRUD wiring drives one real browser pass end to end.
   sort) — each needs its own answer to "what's the unambiguous testable
   UI convention for this," the same problem `first_testable_filter`
   solved narrowly for `select`-typed filters.
+- Give the open-ended app tier (Round fifteen's smoke test) something
+  deeper than "it loaded" — e.g. an optional self-test hook convention the
+  Developer can expose for apps whose functionality can't be derived into
+  a fixed contract, without going back to trusting an LLM's unverified
+  opinion of its own code.

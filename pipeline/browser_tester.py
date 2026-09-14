@@ -1,10 +1,17 @@
 """Drives a generated HTML app in a real headless browser to prove its
-core functionality actually works: login (when the app has accounts,
+core functionality actually works, at whichever of three tiers actually
+applies — none of them assumed, all derived from what Requirements
+actually came back with: login (when the app has accounts,
 pipeline/auth_contract.py's fixed ids) followed by the primary entity's
 add/edit/delete/filter flow (pipeline/crud_contract.py's per-app derived
-ids). When the app has accounts, auth runs first and ends logged in,
-since a plausible app design gates the entity UI behind login — CRUD is
-then driven on that same, already-authenticated page.
+ids, only when Requirements.primary_entity is set) followed by, when
+neither applies, a generic smoke test (the page loads and renders without
+an uncaught error) — the only thing provable about genuinely open-ended
+functionality without a fixed contract to test against. When the app has
+accounts, auth runs first and ends logged in, since a plausible app
+design gates the entity UI behind login — CRUD is then driven on that
+same, already-authenticated page. An uncaught JS error anywhere aborts
+the whole thing as a failure, regardless of which tier(s) ran.
 
 Playwright + a Chromium binary are a dev/test-only dependency (see
 requirements-dev.txt) — this module tolerates either being missing and
@@ -81,22 +88,53 @@ def _drive_functional_flow(browser, html_path: Path, requirements: Requirements,
     page.set_default_timeout(ACTION_TIMEOUT_MS)
     page.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file://") else route.abort())
 
+    page_errors: list[str] = []
+    page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+
     url = html_path.as_uri()
     page.goto(url)
 
     notes: list[str] = []
     passed = True
+    targeted_check_ran = False
 
     if has_auth:
+        targeted_check_ran = True
         auth_passed, auth_notes = _drive_auth_phase(page, url)
         passed = passed and auth_passed
         notes.extend(auth_notes)
 
-    crud_passed, crud_notes = _drive_crud_phase(page, requirements)
-    passed = passed and crud_passed
-    notes.extend(crud_notes)
+    if requirements.primary_entity is not None:
+        targeted_check_ran = True
+        crud_passed, crud_notes = _drive_crud_phase(page, requirements)
+        passed = passed and crud_passed
+        notes.extend(crud_notes)
+
+    if not targeted_check_ran:
+        smoke_passed, smoke_notes = _drive_smoke_test(page)
+        passed = passed and smoke_passed
+        notes.extend(smoke_notes)
+
+    if page_errors:
+        passed = False
+        notes.append(f"Browser console reported uncaught error(s): {page_errors[:3]}")
 
     return TestReport(passed=passed, executed=True, notes=notes)
+
+
+def _drive_smoke_test(page) -> tuple[bool, list[str]]:
+    """The only generic check available for an app that neither manages a
+    primary entity nor has accounts — there's no way to derive a fixed-id
+    contract for genuinely open-ended functionality without knowing its
+    shape in advance. This proves the page actually loads and renders
+    without silently failing; it does not (and can't generically) verify
+    that a bespoke feature like "step through code line by line" is
+    correct — Code Review's text judgment is what grades that.
+    """
+    body_text = page.locator("body").inner_text()
+    if not body_text.strip():
+        return False, ["The page rendered no visible content in <body>."]
+    return True, ["Loaded the app in a real browser; it rendered visible content with no fatal script errors."]
 
 
 def _drive_auth_phase(page, url: str) -> tuple[bool, list[str]]:

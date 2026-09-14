@@ -4,13 +4,16 @@
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue) ![Streamlit](https://img.shields.io/badge/streamlit-1.38+-ff4b4b) ![License](https://img.shields.io/badge/model%20cost-free%20tier-8b5cf6) ![Tests](https://img.shields.io/badge/tests-passing-2ea043)
 
-Turn a spoken audio/video description of an app into a working prototype,
-using a small team of AI agents that mirror a real software development
-lifecycle — a Project Manager, a Requirements Analyst, an Architect, a
-Developer, and a Code Reviewer — plus a real automated Testing stage that
-actually runs the result in a headless browser: adding, editing, deleting,
-and filtering an item, and registration/login when the app's concept
-implies user accounts. See "Accounts and testing" below.
+Turn a spoken audio/video description into a working prototype of
+*whatever you actually described* — a small team of AI agents runs the
+whole SDLC (a Project Manager, a Requirements Analyst, an Architect, a
+Developer, and a Code Reviewer) without assuming every app manages a list
+of records. A task tracker gets one thing built; a calculator, a game, or
+a debugging tool gets something else entirely — see "No forced shape"
+below. A real automated Testing stage then actually runs the result in a
+headless browser, at whichever tier applies: registration/login when the
+app has accounts, add/edit/delete/filter when it manages records, or a
+load/render check for anything else. See "Accounts and testing" below.
 
 <p>
   <img src="docs/screenshots/landing-dark.png" width="49%" alt="App landing screen, dark theme">
@@ -34,9 +37,9 @@ recording (upload or microphone)
         │                  files over ~19.5MB are rejected before upload)
         ▼
  Project Manager  ──kickoff brief──▶
- Requirements Analyst ──requirements.json──▶
+ Requirements Analyst ──requirements.json (entity+actions, freeform features, or a mix)──▶
  Architect ──architecture.json (has_auth)──▶
- Developer ──source code──▶
+ Developer ──source code, whatever shape actually fits──▶
  Code Reviewer ──pass/fail + issues──▶
  Testing ──pass/fail + notes (a real headless browser drives the app itself)──▶
         ▼
@@ -66,6 +69,26 @@ longer picks a language per app (an earlier design let it choose Python
 for automation-style tools); committing to one output shape is what makes
 real, non-optional browser testing possible for every app, not just the
 ones that happen to land on HTML.
+
+### No forced shape
+
+The Requirements Analyst doesn't assume every app manages a list of
+records. If it does (a task tracker, a contacts list, an inventory), it's
+described as a primary entity + fields + actions, same as always. If it
+doesn't (a calculator, a game, a converter, a debugging aid, a chat
+interface), the entity is left empty and the app's real capabilities go
+into a freeform `features` list instead — and the Developer is told
+explicitly not to bolt on a generic add/edit/delete/filter form onto
+something that isn't about managing records. Many apps are a genuine mix
+of both; neither is required. This isn't a cosmetic change — a real bug
+report ("asked for a code debugging application, got a rent-management
+app") turned out to be exactly this: the old prompt forced a "primary
+entity" onto every description, so the model invented a generic one when
+the actual concept didn't have one. See `docs/PROCESS.md` for the full
+diagnosis, including a second bug this fix uncovered: Testing's browser
+driver used to call the CRUD check unconditionally too, so an app with
+correctly *no* entity was failing Testing outright for lacking a form it
+was correctly never told to build.
 
 ### Accounts and testing
 
@@ -98,9 +121,19 @@ real:
   Chromium and, when the app has accounts, logs in *first* (a plausible
   app design gates the entity UI behind login) — including a duplicate
   username registration attempt woven into the existing wrong-password
-  check, so a broken "reject duplicates" rule gets caught for free — then
-  adds an item, edits it in place, exercises the first filterable field,
-  and deletes it, checking real DOM state at every step.
+  check, so a broken "reject duplicates" rule gets caught for free — then,
+  if the app manages an entity, adds an item, edits it in place, exercises
+  the first filterable field, and deletes it, checking real DOM state at
+  every step.
+- When an app has **neither** accounts nor an entity (a calculator, a
+  debugging tool, anything genuinely open-ended), there's no fixed-id
+  contract to derive without knowing the app's shape in advance — so
+  Testing falls back to a generic smoke test: load the page for real,
+  confirm it rendered visible content, and fail on any uncaught JS error
+  (`page.on("pageerror", ...)`, checked for every app regardless of tier).
+  Honest scope: this proves the page didn't silently fail to load, not
+  that a bespoke feature like "step through code line by line" is
+  correct — Code Review's text judgment is what actually grades that.
 - You get one `TestReport` per iteration in the UI ("Testing history"),
   flagged `executed=True`/`False` so you can tell a real result from a
   skipped one.
@@ -110,6 +143,31 @@ real:
   Testing stage will show "skipped" rather than a real pass/fail,
   until/unless a browser is set up there separately (not done by this
   project — see `docs/PROCESS.md`).
+
+### The live preview is isolated per generation
+
+Streamlit's HTML-embedding components (`st.iframe`, and its predecessor
+`st.components.v1.html`) render the app in a `srcdoc` iframe with
+same-origin access to the Streamlit app itself — confirmed straight from
+their own docstrings. Same origin means one shared `localStorage`: without
+`pipeline/preview.py`'s `isolate_local_storage`, generating a task tracker
+and then regenerating a completely different app that also happens to use
+`localStorage.setItem("tasks", ...)` (a very common key) would let the
+second preview see, or silently corrupt, data left over from the first —
+confirmed empirically with a throwaway Streamlit + Playwright probe, not
+just reasoned about. `app.py` generates a fresh id per successful
+generation and wraps *only the preview copy* of the code with a small shim
+that namespaces every `localStorage` key under that id (via
+`Object.defineProperty` — a plain `window.localStorage = ...` assignment
+silently no-ops in Chromium, also confirmed directly). The download button
+still serves the real, unmodified file — a deployed app should have real,
+permanent storage, not a preview-only isolation hack.
+
+`app.py` uses `st.iframe` rather than the older `st.components.v1.html`:
+the latter's own deprecation notice says it "will be removed after
+2026-06-01," which has already passed, and `requirements.txt` has no
+Streamlit upper bound — a future dependency resolution could silently
+break every preview with no code change here to explain why.
 
 Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
@@ -298,11 +356,12 @@ pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider (default), AIHubMixProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
-  schema.py        ProjectBrief, Requirements, ArchitectureDoc (incl. has_auth), QAReport, TestReport, PipelineResult
+  schema.py        ProjectBrief, Requirements (entities/actions or features), ArchitectureDoc, QAReport, TestReport, PipelineResult
   agents.py        Agent (ABC) + the 5 SDLC personas
   auth_contract.py the register/login element-id contract shared by DeveloperAgent's prompt and browser_tester.py
   crud_contract.py the per-app add/edit/delete/filter element-id contract, derived from real Requirements fields
-  browser_tester.py real headless-browser test (login, then add/edit/delete/filter) — dev/test dependency, degrades gracefully
+  browser_tester.py real headless-browser test: auth, CRUD, or a generic smoke test — dev/test dep, degrades gracefully
+  preview.py       isolate_local_storage — namespaces the live preview's storage per generation (app.py only)
   orchestrator.py  Orchestrator — runs the pipeline incl. the QA+Testing/Dev loop
 app.py             Streamlit UI (hero, step tracker, results, buttons) — no sidebar
 cli.py             headless runner

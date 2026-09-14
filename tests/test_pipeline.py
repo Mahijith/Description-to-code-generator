@@ -17,6 +17,7 @@ from pipeline.auth_contract import (
 from pipeline.browser_tester import run_browser_functional_test
 from pipeline.llm import AIHubMixProvider, LLMError, MockLLMProvider, OpenRouterProvider
 from pipeline.orchestrator import Orchestrator
+from pipeline.preview import isolate_local_storage
 from pipeline.schema import Entity, Field, Requirements
 from pipeline.secrets import Secrets, mask_key
 from pipeline.transcribe import GroqWhisperTranscriber, PassthroughTranscriber, TranscriptionError, make_transcriber_for
@@ -92,6 +93,45 @@ BUGGY_LOGIN_HTML = GOLDEN_COMBINED_HTML.replace(
     "document.getElementById('auth-status').textContent = (users[u] === p) ? ('Logged in as ' + u) : '';",
     "document.getElementById('auth-status').textContent = 'Logged in as ' + u;",
 )
+
+# An app with neither an entity nor accounts — exercises the generic
+# smoke-test tier in browser_tester.py, which is all that's left when
+# neither of the fixed-id contracts applies.
+NO_ENTITY_REQUIREMENTS = Requirements(
+    app_name="Quick Calculator",
+    description="Add, subtract, multiply, or divide two numbers.",
+    entities=[],
+    actions=[],
+    filters=[],
+    features=[
+        "Accept two numbers and an operator (+, -, *, /) and show the result",
+        "Show a clear message for divide-by-zero instead of crashing",
+    ],
+    screens=[],
+)
+
+CALCULATOR_HTML = """<!doctype html><html><body>
+<h1>Calculator</h1>
+<input id="a" type="number"><select id="op"><option>+</option><option>-</option><option>*</option><option>/</option></select><input id="b" type="number">
+<button id="compute">=</button>
+<div id="result"></div>
+<script>
+document.getElementById("compute").onclick = function() {
+  var a = parseFloat(document.getElementById("a").value);
+  var b = parseFloat(document.getElementById("b").value);
+  var op = document.getElementById("op").value;
+  var out = document.getElementById("result");
+  if (op === "/" && b === 0) { out.textContent = "Cannot divide by zero"; return; }
+  var r = op === "+" ? a + b : op === "-" ? a - b : op === "*" ? a * b : a / b;
+  out.textContent = String(r);
+};
+</script>
+</body></html>"""
+
+BROKEN_ON_LOAD_HTML = """<!doctype html><html><body>
+<h1>Broken</h1>
+<script>thisFunctionDoesNotExist();</script>
+</body></html>"""
 
 
 def _real_browser_available() -> bool:
@@ -440,6 +480,23 @@ def test_qa_reviewer_includes_crud_addendum():
     assert "item-list" in prompt
 
 
+def test_developer_omits_crud_contract_when_no_entity():
+    log = []
+    DeveloperAgent(MockLLMProvider(), log).build(NO_ENTITY_REQUIREMENTS, _dummy_architecture())
+    prompt = log[-1]["prompt"].lower()
+    assert "add-form" not in prompt
+    assert "do not bolt on a generic" in prompt
+
+
+def test_qa_reviewer_omits_entity_questions_when_no_entity():
+    log = []
+    QAReviewerAgent(MockLLMProvider(), log).review(NO_ENTITY_REQUIREMENTS, _dummy_architecture(), "<html></html>")
+    prompt = log[-1]["prompt"].lower()
+    assert "primary entity" not in prompt
+    assert "add-form" not in prompt  # crud_contract.qa_prompt_addendum shouldn't fire either
+    assert "capability listed in 'features'" in prompt
+
+
 def test_crud_contract_slugify_and_ids():
     from pipeline import crud_contract
 
@@ -519,6 +576,22 @@ def test_run_browser_functional_test_skips_crud_gracefully_with_no_creatable_fie
     assert any("wasn't executed" in note.lower() for note in report.notes)
 
 
+@needs_real_browser
+def test_run_browser_functional_test_uses_smoke_test_when_no_entity_and_no_auth():
+    report = run_browser_functional_test(NO_ENTITY_REQUIREMENTS, False, CALCULATOR_HTML)
+    assert report.executed is True
+    assert report.passed is True
+    assert any("visible content" in note.lower() for note in report.notes)
+
+
+@needs_real_browser
+def test_run_browser_functional_test_smoke_test_catches_uncaught_errors():
+    report = run_browser_functional_test(NO_ENTITY_REQUIREMENTS, False, BROKEN_ON_LOAD_HTML)
+    assert report.executed is True
+    assert report.passed is False
+    assert any("uncaught error" in note.lower() for note in report.notes)
+
+
 def test_run_browser_functional_test_degrades_gracefully_without_a_real_browser():
     if REAL_BROWSER_AVAILABLE:
         pytest.skip("a real browser is available in this environment; the degrade path isn't exercised")
@@ -550,6 +623,35 @@ def test_orchestrator_runs_crud_test_even_without_auth():
 
 
 @needs_real_browser
+def test_orchestrator_builds_non_entity_app_without_forcing_crud():
+    class CalculatorLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: REQUIREMENTS" in prompt:
+                return {
+                    "app_name": NO_ENTITY_REQUIREMENTS.app_name,
+                    "description": NO_ENTITY_REQUIREMENTS.description,
+                    "entities": [],
+                    "actions": [],
+                    "filters": [],
+                    "features": NO_ENTITY_REQUIREMENTS.features,
+                    "screens": [],
+                }
+            return super().complete_json(prompt)
+
+        def complete(self, prompt):
+            if "STAGE: DEVELOPER" in prompt:
+                return CALCULATOR_HTML
+            return super().complete(prompt)
+
+    orchestrator = Orchestrator(CalculatorLLM())
+    result = orchestrator.run(SAMPLE_TRANSCRIPT)
+    assert result.requirements.primary_entity is None
+    last_test = result.test_reports[-1]
+    assert last_test.executed is True
+    assert last_test.passed is True
+
+
+@needs_real_browser
 def test_orchestrator_runs_real_browser_test_when_html_app_has_auth():
     class AuthAppLLM(MockLLMProvider):
         def complete_json(self, prompt):
@@ -569,6 +671,56 @@ def test_orchestrator_runs_real_browser_test_when_html_app_has_auth():
     last_test = result.test_reports[-1]
     assert last_test.executed is True
     assert last_test.passed is True
+
+
+_STORAGE_PROBE_HTML = """<!doctype html><html><body>
+<div id="out"></div>
+<script>
+document.getElementById("out").textContent = "sees: " + localStorage.getItem("shared_key");
+localStorage.setItem("shared_key", "hello");
+</script>
+</body></html>"""
+
+
+@needs_real_browser
+def test_isolate_local_storage_keeps_different_run_ids_apart(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    html_a = isolate_local_storage(_STORAGE_PROBE_HTML, "run-A")
+    html_b = isolate_local_storage(_STORAGE_PROBE_HTML, "run-B")
+    path_a = tmp_path / "a.html"
+    path_b = tmp_path / "b.html"
+    path_a.write_text(html_a)
+    path_b.write_text(html_b)
+
+    kwargs = {"headless": True, "args": ["--no-sandbox"]}
+    executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if executable_path:
+        kwargs["executable_path"] = executable_path
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(**kwargs)
+        page = browser.new_page()
+        page.goto(path_a.as_uri())
+        assert "sees: null" in page.locator("#out").inner_text()
+        page.goto(path_b.as_uri())
+        assert "sees: null" in page.locator("#out").inner_text()  # different run_id — doesn't see A's write
+        page.goto(path_a.as_uri())
+        assert "sees: hello" in page.locator("#out").inner_text()  # same run_id as before — persists normally
+        browser.close()
+
+
+def test_isolate_local_storage_handles_body_with_attributes():
+    html = '<html><body class="x" data-y="1"><p>hi</p></body></html>'
+    result = isolate_local_storage(html, "abc")
+    assert result.index("<script>") > result.index('<body class="x" data-y="1">')
+
+
+def test_isolate_local_storage_falls_back_when_no_body_tag():
+    html = "<p>no body tag here</p>"
+    result = isolate_local_storage(html, "abc")
+    assert result.startswith("<script>")
+    assert "no body tag here" in result
 
 
 def _dummy_requirements():

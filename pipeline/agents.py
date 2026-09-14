@@ -86,10 +86,24 @@ Project brief: {json.dumps(brief.to_dict())}
 Full transcript:
 \"\"\"{transcript}\"\"\"
 
-Extract the functional requirements for a rapid prototype. Identify the
-single primary entity being managed (e.g. "Task", "Contact", "Recipe"),
-its fields, the actions the user described (e.g. add, edit, delete,
-complete, filter, search, sort), any filters, and the screens needed.
+Extract the functional requirements for a rapid prototype — whatever
+shape this specific app actually needs. Don't force it into a
+data-management mold it doesn't fit:
+
+- If the app manages a collection of records with clear fields (e.g.
+  tasks, contacts, recipes, inventory items), describe that as a primary
+  entity (name + fields) and put the record-level actions (add, edit,
+  delete, complete, filter, search, sort) in "actions".
+- If the app doesn't manage a record collection at all (e.g. a tool, a
+  game, a calculator, a visualizer, a debugging aid, a chat interface),
+  leave "entities" and "actions" empty and instead describe every real
+  capability the app needs in "features" — plain-language statements of
+  what it must actually do (e.g. "let the user paste a code snippet and
+  step through it line by line," "highlight the currently executing
+  line," "show a call stack that updates as execution advances").
+- Many apps are a genuine mix of both — describe whatever combination is
+  actually true. Never invent a "primary entity" or generic CRUD verbs
+  just to fill in a field; leave it empty when it doesn't apply.
 
 Reply with ONLY a JSON object of this exact shape:
 {{
@@ -98,10 +112,12 @@ Reply with ONLY a JSON object of this exact shape:
   "entities": [{{"name": string, "fields": [{{"name": string, "type": "text"|"number"|"date"|"boolean"|"select", "options": [string, ...]}}]}}],
   "actions": [string, ...],
   "filters": [string, ...],
+  "features": [string, ...],
   "screens": [{{"name": string, "purpose": string}}]
 }}
-Only the primary entity is required; "options" may be omitted or empty for
-non-select fields."""
+Nothing is required except "app_name" and "description" — leave any of
+"entities"/"actions"/"filters"/"features" empty if it genuinely doesn't
+apply; "options" may be omitted or empty for non-select fields."""
         data = self._ask_json("requirements", prompt)
         return Requirements.from_dict(data)
 
@@ -117,8 +133,8 @@ Design the technical approach for a RAPID PROTOTYPE (not production
 software). It will be built as ONE self-contained HTML file: inline CSS
 and JS, `localStorage` persistence, opens directly in a browser, no
 server, no build step, no third-party dependencies, no external network
-calls. Decide the data model (how the primary entity is stored) and a
-short screen/output breakdown.
+calls. Decide how the app's data or state is held, if it manages any, and
+a short screen/output breakdown.
 
 Also decide whether this app's concept genuinely implies user accounts —
 each person seeing only their own saved data, an explicit sign-up/log-in,
@@ -153,13 +169,17 @@ Architecture: {json.dumps(architecture.to_dict())}
 
 Write the COMPLETE prototype as ONE self-contained HTML file matching the
 architecture above exactly: inline CSS and JS, `localStorage`
-persistence, no build step, no third-party dependencies to install, no
-external network calls. Implement every field of the primary entity and
-every action listed in requirements (e.g. add/edit/delete/mark complete/
-filter/search), and show a friendly empty-state message when there's
-nothing to show yet. Render dynamic content with `textContent`, never by
-concatenating user input into `innerHTML`. No explanation text, no
-markdown fences.
+persistence where the app genuinely needs to remember something, no
+build step, no third-party dependencies to install, no external network
+calls. Implement everything Requirements actually describes, to the best
+of your ability: every field/action for the primary entity if there is
+one, AND every capability listed in "features". Build whatever UI and
+interaction pattern actually fits THIS app — do not bolt on a generic
+add/edit/delete/filter data-entry form for an app that isn't about
+managing a list of records. If the app does show a list of records, show
+a friendly empty-state message when there's nothing to show yet. Render
+dynamic content with `textContent`, never by concatenating user input
+into `innerHTML`. No explanation text, no markdown fences.
 
 Reply with ONLY the raw source code for that one file."""
         code = self._ask("developer", prompt)
@@ -168,8 +188,22 @@ Reply with ONLY the raw source code for that one file."""
 
 class QAReviewerAgent(Agent):
     def review(self, requirements: Requirements, architecture: ArchitectureDoc, code: str) -> QAReport:
+        has_entity = requirements.primary_entity is not None
+        entity_line = (
+            "Is every field of the primary entity present as an input, and does "
+            "every listed action (add/edit/delete/complete/filter/etc.) actually "
+            "work? Is there a message shown when there's nothing to show yet? "
+            if has_entity
+            else ""
+        )
+        features_line = (
+            "Does the prototype actually implement every capability listed in "
+            "'features', correctly and completely for what this app is? "
+            if requirements.features
+            else ""
+        )
         auth_line = f"\n{auth_contract.QA_PROMPT_ADDENDUM}" if architecture.has_auth else ""
-        crud_line = f"\n{crud_contract.qa_prompt_addendum(requirements)}"
+        crud_line = f"\n{crud_contract.qa_prompt_addendum(requirements)}" if has_entity else ""
         prompt = f"""You are the Code Reviewer on a small software team.
 This is STAGE: QA.
 
@@ -178,11 +212,9 @@ Architecture: {json.dumps(architecture.to_dict())}
 Generated prototype (HTML source):
 \"\"\"{code}\"\"\"
 
-Check the prototype against the requirements: is every field of the
-primary entity present as an input? Does every action (add/edit/delete/
-complete/filter/etc.) actually work in the code? Is there a message shown
-when there's nothing to show yet? Is user input handled safely (no
-`innerHTML` built from untrusted input — use `textContent` instead)?{crud_line}{auth_line}
+Check the prototype against the requirements: {entity_line}{features_line}Is
+user input handled safely (no `innerHTML` built from untrusted input —
+use `textContent` instead)?{crud_line}{auth_line}
 
 Reply with ONLY a JSON object:
 {{"passed": boolean, "issues": [string, ...]}}
