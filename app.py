@@ -314,12 +314,53 @@ if "result" in st.session_state:
 
     st.success(result.summary, icon="✅")
 
+    # The preview renders full-width, not squeezed into a half-width column:
+    # a generated app can include its own narrow-viewport CSS (e.g. a
+    # @media(max-width:768px) sidebar breakpoint), and a half-width column at
+    # normal browser sizes was frequently narrower than that — triggering a
+    # mobile layout the app's own author never actually verified, making a
+    # perfectly fine app look broken in "the preview" specifically. Confirmed
+    # empirically: the same iframe at full page width reliably renders above
+    # that threshold at any normal window size.
+    language = result.architecture.language
+    extension = result.architecture.file_extension
+    if language == "html":
+        st.caption("Live preview")
+        preview_run_id = st.session_state.get("preview_run_id", "0")
+        st.iframe(isolate_local_storage(result.code, preview_run_id), height=480)
+    else:
+        st.caption(f"Generated {language} source")
+        st.code(result.code, language=language, height=480)
+
+    dl_col, regen_col, reset_col = st.columns(3)
+    with dl_col:
+        st.download_button(
+            "⬇ Download",
+            data=result.code,
+            file_name=f"app.{extension}",
+            mime=MIME_TYPES.get(extension, "text/plain"),
+            use_container_width=True,
+        )
+    with regen_col:
+        if st.button("🔁 Regenerate", use_container_width=True):
+            st.session_state["regenerate_requested"] = True
+            st.rerun()
+    with reset_col:
+        if st.button("↺ Start over", use_container_width=True):
+            st.session_state.pop("result", None)
+            st.session_state.pop("last_transcript", None)
+            st.rerun()
+    if language == "html":
+        with st.expander("View source"):
+            st.code(result.code, language="html")
+
     col_left, col_right = st.columns(2)
     with col_left:
         with st.expander("Requirements", expanded=False):
             st.json(result.requirements.to_dict())
         with st.expander("Architecture", expanded=False):
             st.json(result.architecture.to_dict())
+    with col_right:
         with st.container(border=True):
             st.caption(f"Code review history — {result.iterations} iteration(s)")
             for i, qa in enumerate(result.qa_reports, start=1):
@@ -333,37 +374,6 @@ if "result" in st.session_state:
                 st.write(f"Pass {i}: {'✅ passed' if test.passed else '⚠️ issues found'} ({mode})")
                 for note in test.notes:
                     st.caption(f"– {note}")
-    with col_right:
-        language = result.architecture.language
-        extension = result.architecture.file_extension
-        if language == "html":
-            st.caption("Live preview")
-            preview_run_id = st.session_state.get("preview_run_id", "0")
-            st.iframe(isolate_local_storage(result.code, preview_run_id), height=340)
-        else:
-            st.caption(f"Generated {language} source")
-            st.code(result.code, language=language, height=340)
-        dl_col, regen_col, reset_col = st.columns(3)
-        with dl_col:
-            st.download_button(
-                "⬇ Download",
-                data=result.code,
-                file_name=f"app.{extension}",
-                mime=MIME_TYPES.get(extension, "text/plain"),
-                use_container_width=True,
-            )
-        with regen_col:
-            if st.button("🔁 Regenerate", use_container_width=True):
-                st.session_state["regenerate_requested"] = True
-                st.rerun()
-        with reset_col:
-            if st.button("↺ Start over", use_container_width=True):
-                st.session_state.pop("result", None)
-                st.session_state.pop("last_transcript", None)
-                st.rerun()
-        if language == "html":
-            with st.expander("View source"):
-                st.code(result.code, language="html")
 
     with st.expander("Prompt log (every prompt sent to the model)"):
         for entry in result.prompt_log:

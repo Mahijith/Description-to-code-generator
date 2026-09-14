@@ -169,6 +169,20 @@ the latter's own deprecation notice says it "will be removed after
 Streamlit upper bound — a future dependency resolution could silently
 break every preview with no code change here to explain why.
 
+### The preview renders full-width
+
+A generated app can include its own narrow-viewport CSS (e.g. a
+`@media(max-width:768px)` rule that shrinks a sidebar). Squeezed into a
+half-width column, the preview's real rendered width was frequently
+narrower than that breakpoint at ordinary browser sizes — triggering a
+mobile layout the app's own author never actually verified, which can
+overflow/overlap (confirmed with a real bug report and reproduced
+directly: a generated app's sidebar nav text overflowed a shrunk 60px
+column straight into the main heading). The preview now renders full
+page width, which reliably stays above that threshold at any normal
+window size; `DeveloperAgent`'s prompt also now asks explicitly for any
+responsive breakpoint to actually be checked, not just added.
+
 Every one of the five agents is a thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. Both `app.py` and `cli.py` default to **`OpenRouterProvider`**

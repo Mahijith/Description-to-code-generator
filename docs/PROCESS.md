@@ -777,6 +777,49 @@ behavior (so the storage fix above is still necessary after migrating),
 confirmed directly from its docstring in the installed version rather
 than assumed from changelog text.
 
+## Round sixteen: a real generated app, a broken preview, and what it revealed
+
+The deployer pasted a real generated rent-management app whose preview
+looked genuinely broken — sidebar nav text overlapping the main heading.
+Reproduced it directly rather than guessing: saved the exact HTML,
+rendered it through the exact same `st.iframe` + `st.columns(2)` layout
+`app.py` uses, and it broke identically. Root cause: the generated app's
+own `@media(max-width:768px)` CSS shrinks its sidebar to 60px, and
+Streamlit's half-width column rendered the preview iframe at ~344px wide
+at every window size tested — well under that breakpoint — so the app's
+mobile layout activated, and its nav labels (full words, no
+`overflow`/`text-overflow` handling) spilled out of the 60px box into the
+main content. Checked whether this was a regression from Round fifteen's
+`st.iframe` migration before assuming so: it wasn't — the old
+`components.v1.html` reproduced the identical 344px width in the same
+layout. The actual fix was removing the half-width squeeze: the preview
+now renders full page width, confirmed empirically to stay above 768px
+at every realistic window size tried (900–1400px). `DeveloperAgent`'s
+prompt also now asks for any responsive breakpoint to be verified, not
+just written, since a real deployment can still legitimately be viewed
+at a narrow width.
+
+Investigating that app also turned up a second, unrelated bug: two of its
+functions ended with a stray extra `);`, an unbalanced-bracket syntax
+error that silently kills an *entire* inline `<script>` block — none of
+that app's interactivity would have worked at all. This is exactly the
+class of bug the Testing stage's real browser execution exists to catch
+(driving `#add-form` would have failed outright). Since the fixed
+elements matched our CRUD contract precisely, this app should have gone
+through Testing — which raises a real, previously-only-theoretical
+question directly: is Testing actually running on the live Streamlit
+Cloud deployment, or has it been silently reporting "skipped" there this
+whole time because Playwright isn't installed on that deployment (a
+known, documented gap — see Round twelve)? If the latter, Code Review's
+text-only review has been the *only* check running in production, and a
+single stray bracket is a very easy thing for a model reading code,
+rather than executing it, to miss. Its prompt now explicitly asks it to
+mentally balance every bracket in every `<script>` block first — a cheap,
+always-useful change regardless of the answer. Whether to also attempt
+running Playwright on the actual Streamlit Cloud deployment (fragile,
+flagged as out of scope back in Round twelve) is a decision for the
+deployer, not something to change unilaterally while fixing a layout bug.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

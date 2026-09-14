@@ -179,7 +179,12 @@ add/edit/delete/filter data-entry form for an app that isn't about
 managing a list of records. If the app does show a list of records, show
 a friendly empty-state message when there's nothing to show yet. Render
 dynamic content with `textContent`, never by concatenating user input
-into `innerHTML`. No explanation text, no markdown fences.
+into `innerHTML`. If you add any responsive/narrow-viewport CSS (e.g. a
+`@media` breakpoint that shrinks a sidebar or nav), verify it actually
+holds up — labels must not overflow or overlap other content at that
+width; when in doubt, prefer a layout that adapts fluidly over a
+fixed-width breakpoint you haven't actually checked. No explanation text,
+no markdown fences.
 
 Reply with ONLY the raw source code for that one file."""
         code = self._ask("developer", prompt)
@@ -212,7 +217,16 @@ Architecture: {json.dumps(architecture.to_dict())}
 Generated prototype (HTML source):
 \"\"\"{code}\"\"\"
 
-Check the prototype against the requirements: {entity_line}{features_line}Is
+First, read every `<script>` block character by character and mentally
+parse it: count opening vs. closing parens/braces for every function, and
+check for a stray extra closing token left over from a previous edit
+(e.g. an extra `);` after a line that already ended its statement). A
+single unbalanced bracket anywhere makes the ENTIRE script fail silently
+— none of the app's functionality runs, not just the one function it's
+in. This is the single most common way these prototypes break, and it
+will not throw anything you can see without actually checking it.
+
+Then check the prototype against the requirements: {entity_line}{features_line}Is
 user input handled safely (no `innerHTML` built from untrusted input —
 use `textContent` instead)?{crud_line}{auth_line}
 
