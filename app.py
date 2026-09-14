@@ -6,6 +6,7 @@ prototype.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -46,6 +47,10 @@ _bridge_secret_to_env("OPENROUTER_API_KEY")
 
 def _friendly_llm_error(exc: LLMError) -> str:
     msg = str(exc)
+    # The browser only ever sees a generic message (deliberately, so it never
+    # names a platform or exposes a key) — this is the one place the real
+    # cause survives, for whoever owns the app to check in its server logs.
+    print(f"[app] LLM error: {msg}", file=sys.stderr)
     if "API key configured" in msg:
         return (
             "This app isn't configured yet. If you're the deployer, please add the "
@@ -69,6 +74,7 @@ def _friendly_transcription_error(exc: TranscriptionError) -> str:
     lowered = msg.lower()
     if "groq" not in lowered and "api key" not in lowered:
         return msg  # already a generic, platform-agnostic message we wrote ourselves
+    print(f"[app] Transcription error: {msg}", file=sys.stderr)
     if "429" in msg or "rate-limited" in lowered:
         return "This app is being rate-limited right now (shared usage). Wait a bit and try again."
     if "too large" in lowered:
