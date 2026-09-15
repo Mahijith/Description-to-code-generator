@@ -112,6 +112,18 @@ data-management mold it doesn't fit:
   tasks" still has a usable feature/entity to extract); only leave every
   one of those three empty when there is genuinely nothing described to
   build.
+- A transcript can be detailed, coherent, and full of concrete nouns and
+  still have no scope: a story, an anecdote, a review, or a description
+  of something in the real world is NOT a request to build anything, even
+  when it contains things that superficially look like fields (a name, a
+  category, a rating). Example: "I know a restaurant down my lane, it
+  tastes very good, it's a Chinese restaurant named Panda Express" is
+  someone describing a restaurant they like — not asking for a restaurant
+  app, a review app, or anything else. Do NOT reverse-engineer an entity
+  or feature out of whatever nouns happen to be present; only extract
+  something when the speaker is actually asking for, expressing a wish
+  for, or narrating the design of a piece of software, a tool, or an
+  automatable process.
 
 Reply with ONLY a JSON object of this exact shape:
 {{

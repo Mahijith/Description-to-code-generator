@@ -904,6 +904,24 @@ the Requirements stage: Architect, Developer, Code Review, and Testing
 never run, and the app shows a plain notice plus the transcript instead
 of a generated app.
 
+**Update:** the first version of this fix was too narrow. Asked directly
+whether a genuinely detailed, coherent sentence with no build intent —
+"I know a restaurant down my lane... it's a Chinese restaurant named
+Panda Express" — would also be caught, and the honest answer was: not
+reliably. The original prompt wording only listed noise-like examples (a
+greeting, silence, test phrases), which misses the more dangerous case: a
+transcript with real, concrete nouns (a name, a cuisine, a rating) that
+could be pattern-matched into an entity even though nobody asked for an
+app at all — the exact "restaurant" example, read naively, looks like it
+has fields. Added a second, explicit instruction using that exact
+sentence as the example: detailed and coherent is not the same as
+build-intent, and the model should never reverse-engineer an entity out
+of whatever nouns happen to be present. The distinction now drawn is
+"noise vs. off-topic content" being two different reasons for the same
+verdict, not two different verdicts — both correctly short-circuit through
+the same `has_buildable_scope` check, confirmed with a fixture using the
+literal reported sentence.
+
 As with every model-facing change this session, this can't be verified
 end to end against a real OpenRouter model from this sandbox — only that
 the machinery correctly short-circuits and renders when the Requirements

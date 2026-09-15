@@ -662,6 +662,13 @@ def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
     normalized = " ".join(prompt.lower().split())
     assert "leave \"entities\", \"actions\", and \"features\" all empty" in normalized
     assert "vague-but-real request" in normalized
+    # Coherent, detailed, unrelated content (a story/anecdote/review) must
+    # be called out as its own no-scope case, distinct from noise like a
+    # greeting — a model can otherwise reverse-engineer an entity out of
+    # whatever nouns happen to be present (e.g. treating an offhand
+    # restaurant recommendation as a request for a restaurant/review app).
+    assert "panda express" in normalized
+    assert "reverse-engineer an entity" in normalized
 
 
 def test_orchestrator_skips_pipeline_when_no_buildable_scope():
@@ -687,6 +694,41 @@ def test_orchestrator_skips_pipeline_when_no_buildable_scope():
     assert result.architecture is None
     assert result.code == ""
     assert result.summary
+    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+
+
+def test_orchestrator_skips_pipeline_for_coherent_but_unrelated_content():
+    """Distinct from the "hello" case: this transcript is a real, detailed
+    sentence — it just isn't a request to build anything. Proves the
+    short-circuit works the same way once the Requirements stage reports
+    empty scope, regardless of why (noise vs. off-topic content)."""
+
+    restaurant_review = (
+        "I know a restaurant down my lane. It tastes very good. "
+        "It's a Chinese restaurant named Panda Express."
+    )
+
+    class NoScopeLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: REQUIREMENTS" in prompt:
+                return {
+                    "app_name": "Untitled",
+                    "description": "An anecdote about a restaurant, not a request to build anything.",
+                    "entities": [],
+                    "actions": [],
+                    "filters": [],
+                    "features": [],
+                    "screens": [],
+                }
+            return super().complete_json(prompt)
+
+    orchestrator = Orchestrator(NoScopeLLM())
+    stages: list[str] = []
+    result = orchestrator.run(restaurant_review, on_stage=lambda s, status: stages.append(s))
+
+    assert result.requirements.has_buildable_scope is False
+    assert result.architecture is None
+    assert result.code == ""
     assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
 
 
