@@ -1,85 +1,11 @@
-# Project Summary: AI-Driven Description-to-Application Pipeline
+# Brainstorming & Process Summary
 
-**Brainstorming & Process**
+The system turns a spoken description into a working application through six agents that each handle one stage of the process: a Scope Gate, a Project Manager, a Requirements Analyst, an Architect, a Developer, and a Code Reviewer, followed by an automated Testing stage. Each stage passes its output to the next, and the Developer's result is verified and refined for up to three passes before the final application is produced — a single, self-contained file that runs immediately in a browser, with no server or build step required.
 
-**Problem framing.** The assignment: turn an audio/video description into
-a working prototype. Rather than one prompt-to-code pass, the problem was
-reframed as: can a small team of specialized AI agents, each owning one
-part of the SDLC, mirror how a real team builds a draft — including
-catching its own mistakes before shipping? That question drove the two
-decisions that shaped everything after: a multi-agent pipeline, and a
-genuine feedback loop rather than a straight line.
+The Scope Gate runs first, before any other stage. It reads the transcript and makes one decision: does it describe an actual goal or idea for an application? Only when it does does the pipeline continue to requirements extraction and build; if the recording doesn't describe anything to build, the person is told so directly, rather than having the pipeline generate an unrelated result.
 
-**Architecture, iterated under real constraints.** A first three-stage
-design (transcribe → spec → generate) collapsed "understand," "decide,"
-and "verify" into one ungoverned step, so it was restructured into five
-agents — Project Manager, Requirements Analyst, Architect, Developer,
-Code Reviewer — with review findings routed back to the Developer for a
-bounded number of fixes before sign-off. A hosting path via a Claude
-Artifact was evaluated and rejected after reading the platform's own
-type definitions showed no audio support — a real constraint, stated
-plainly rather than built around silently. Every agent was routed through
-one provider-agnostic interface so the default model could be swapped
-with a one-line change; that paid off directly when the default model
-was changed six times across a rate-limit issue, an upstream outage, and
-repeated truncation bugs, each swap fully isolated. A later bug report —
-"asked for a debugging tool, got a rent-management app" — traced to a
-prompt that forced every description into an entity/fields/actions
-shape; fixed by adding a freeform `features` path so non-records-list
-apps build to their actual described shape instead of a forced default.
+Testing is carried out by actually running the generated application in a real browser, not by asking a model to review its own code. Depending on what the application needs, the test drives it through the relevant flow: registering and logging in a user for apps with accounts, or adding, editing, filtering, and deleting a record for apps that manage data, confirming each step produces the expected result on screen. This is what allows the three-pass build cycle to catch and correct real issues before the application is handed over, producing an executable result each time.
 
-**Testing infrastructure — the core original contribution.** Replaced
-"an LLM's opinion of its own code" with real, automated execution. A
-fixed element-id contract derives predictable ids from each app's actual
-requirements and is shared verbatim between the Developer's prompt and a
-headless-Chromium test driver, so instruction and verification can never
-drift apart. That driver exercises registration/login (with reload-based
-persistence and duplicate-account checks), full add/edit/delete/filter
-flows, or a generic load-and-render smoke test — whichever tier a given
-app actually needs. Running a real flagged app through this harness
-surfaced a genuine methodology gap (the driver assumed a form was
-visible on load, failing a well-built multi-screen app with an opaque
-timeout) and a live-preview data-isolation defect, found by testing the
-stated scope requirement literally: the preview's HTML component shares
-one browser-storage origin across generations, so a new prototype could
-silently inherit an old one's data. Verified empirically with a
-disposable Streamlit + Playwright probe — which also caught that a plain
-JS property reassignment silently no-ops in Chromium — before shipping a
-namespaced-storage fix scoped to the preview only.
+Development was done using Claude Code as the primary AI tool, working iteratively: each stage's prompt was refined by testing it against real generated output and observing the result, rather than designing it once and assuming it would hold. The model backend (OpenRouter, running free-tier language models) and the transcription backend (Groq's hosted Whisper API) were each selected the same way — evaluated directly, then adopted once they performed reliably for their part of the pipeline.
 
-**Debugging methodology.** When five consecutive model swaps produced an
-identical "stops mid-process" symptom, the repetition itself was treated
-as the signal, not the models: traced to a missing truncation check, not
-model choice. When a proposed fix was challenged as solving the wrong
-problem, the response was to instrument the provider's own token-usage
-data rather than argue from assertion — the resulting evidence settled
-the disagreement and corrected an initially wrong working theory.
-
-**Input validation, iterated toward a dedicated agent.** Off-topic or
-scope-less recordings (a greeting, an unrelated remark, a bare "build me
-an app" with nothing specified) were initially screened by one rule
-folded into the requirements-extraction prompt. Live testing showed this
-wasn't reliable — the rule competed for attention against ~40 lines of
-unrelated extraction instructions. The fix generalized the check into
-one explicit test ("does this name an actual goal to build toward?") and
-then relocated it entirely: a dedicated Scope Gate agent now runs first,
-before any other stage, with that decision as its only job. Each pipeline
-stage owns exactly one responsibility, and the gate blocks wasted work
-before it starts.
-
-**Tools and technique.** An agentic coding assistant (Claude Code) drove
-implementation and, critically, empirical verification — disposable
-servers and Playwright sessions confirming real behavior, not just
-source-reading. Backends evaluated: OpenRouter and AIHubMix for
-generation, Groq's hosted Whisper API for transcription (replacing an
-on-device approach after diagnosing a missing system library on the
-target host). Prompts were hardened to require an exact JSON shape with
-tolerant fallback parsing (no JSON-mode guarantee on free-tier models),
-explicit safety instructions matched by a Code Review checklist item,
-and conditional construction so an agent's instructions expand or
-contract to what a given app actually needs.
-
-**Outcome.** A working, tested six-agent pipeline producing one
-self-contained, runnable file per description, real-execution-tested at
-whichever functional tier applies, with every design trade-off and
-defect diagnosis documented for traceability.
+The result is a complete, working pipeline: a recording goes in, and a functioning, ready-to-run application comes out.
