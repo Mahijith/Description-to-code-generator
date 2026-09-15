@@ -22,7 +22,7 @@ from pipeline.transcribe import TranscriptionError, make_transcriber_for
 MAX_UPLOAD_BYTES = 19_500_000  # Groq's API stops accepting files above ~19.5MB in practice
 MIME_TYPES = {"html": "text/html", "py": "text/x-python", "js": "text/javascript"}
 
-st.set_page_config(page_title="ATA System", page_icon="assets/logo.png", layout="wide")
+st.set_page_config(page_title="AV2A", page_icon="assets/logo.png", layout="wide")
 
 
 def _bridge_secret_to_env(name: str) -> None:
@@ -143,7 +143,7 @@ with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
     st.title("ATA System")
-    st.caption("A 5-agent SDLC pipeline, plus a real browser-testing stage, turns an audio or video description into a working prototype.")
+    st.caption("A 5-agent SDLC pipeline plus a real browser-testing stage turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
     + "".join(f"<span class='badge'>{label}</span>" for _, label in STAGE_NODES)
@@ -164,10 +164,10 @@ with st.expander("How it works"):
         "6. **Testing** — actually runs the app in a real browser: registration/login when it "
         "has accounts, add/edit/delete/filter when it manages records, or a load/render check "
         "for anything else\n\n"
-        "Up to three build → review → test passes — if Code Review or Testing finds something, "
-        "the Developer gets up to two more chances to fix it, then whatever's produced ships "
-        "either way. Click Regenerate for a fresh attempt any time. Access is already "
-        "configured by whoever deployed this app — nothing to enter here."
+        "Up to three build → review → test passes — if Code Review or Testing finds some issues, "
+        "the Developer gets up to two more chances to fix it, then whatever's produced is displayed "
+        "Click Regenerate for a fresh attempt. Access is already "
+        "preconfigured."
     )
 
 # ---------------------------------------------------------------------------
