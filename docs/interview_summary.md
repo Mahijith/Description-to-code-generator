@@ -55,6 +55,18 @@ problem, the response was to instrument the provider's own token-usage
 data rather than argue from assertion — the resulting evidence settled
 the disagreement and corrected an initially wrong working theory.
 
+**Input validation, iterated toward a dedicated agent.** Off-topic or
+scope-less recordings (a greeting, an unrelated remark, a bare "build me
+an app" with nothing specified) were initially screened by one rule
+folded into the requirements-extraction prompt. Live testing showed this
+wasn't reliable — the rule competed for attention against ~40 lines of
+unrelated extraction instructions. The fix generalized the check into
+one explicit test ("does this name an actual goal to build toward?") and
+then relocated it entirely: a dedicated Scope Gate agent now runs first,
+before any other stage, with that decision as its only job. Each pipeline
+stage owns exactly one responsibility, and the gate blocks wasted work
+before it starts.
+
 **Tools and technique.** An agentic coding assistant (Claude Code) drove
 implementation and, critically, empirical verification — disposable
 servers and Playwright sessions confirming real behavior, not just
@@ -67,7 +79,7 @@ explicit safety instructions matched by a Code Review checklist item,
 and conditional construction so an agent's instructions expand or
 contract to what a given app actually needs.
 
-**Outcome.** A working, tested pipeline producing one self-contained,
-runnable file per description, real-execution-tested at whichever
-functional tier applies, with every design trade-off and defect
-diagnosis documented for traceability.
+**Outcome.** A working, tested six-agent pipeline producing one
+self-contained, runnable file per description, real-execution-tested at
+whichever functional tier applies, with every design trade-off and
+defect diagnosis documented for traceability.
