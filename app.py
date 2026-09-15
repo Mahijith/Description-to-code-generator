@@ -165,7 +165,7 @@ with st.expander("How it works"):
         "has accounts, add/edit/delete/filter when it manages records, or a load/render check "
         "for anything else\n\n"
         "Up to three build → review → test passes — if Code Review or Testing finds some issues, "
-        "the Developer gets up to two more chances to fix it, then whatever's produced is displayed "
+        "the Developer gets up to two more chances to fix it, then the result is produced."
         "Click Regenerate for a fresh attempt. Access is already "
         "preconfigured."
     )
