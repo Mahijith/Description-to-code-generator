@@ -669,6 +669,10 @@ def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
     # restaurant recommendation as a request for a restaurant/review app).
     assert "panda express" in normalized
     assert "reverse-engineer an entity" in normalized
+    # A bare "build me an app" with no named goal/domain must also be
+    # rejected — an instruction to build is not itself a specification.
+    assert "build me an app" in normalized
+    assert "is not a specification" in normalized
 
 
 def test_orchestrator_skips_pipeline_when_no_buildable_scope():
@@ -729,6 +733,36 @@ def test_orchestrator_skips_pipeline_for_coherent_but_unrelated_content():
     assert result.requirements.has_buildable_scope is False
     assert result.architecture is None
     assert result.code == ""
+    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+
+
+def test_orchestrator_skips_pipeline_for_bare_build_instruction_with_no_target():
+    """"Build me an app" names no goal/domain/feature — an instruction to
+    build is not itself a specification, even though it's literally about
+    building software. Distinct from both the noise case and the
+    unrelated-content case: this transcript IS about wanting an app, just
+    with nothing to build it toward."""
+
+    class NoScopeLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: REQUIREMENTS" in prompt:
+                return {
+                    "app_name": "Untitled",
+                    "description": "A bare request to build an app with no named goal or domain.",
+                    "entities": [],
+                    "actions": [],
+                    "filters": [],
+                    "features": [],
+                    "screens": [],
+                }
+            return super().complete_json(prompt)
+
+    orchestrator = Orchestrator(NoScopeLLM())
+    stages: list[str] = []
+    result = orchestrator.run("Build me an app.", on_stage=lambda s, status: stages.append(s))
+
+    assert result.requirements.has_buildable_scope is False
+    assert result.architecture is None
     assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
 
 

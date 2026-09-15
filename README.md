@@ -97,15 +97,34 @@ was correctly never told to build.
 "No forced shape" is about *not* assuming a shape a description doesn't
 call for — a calculator correctly has no entity but still has real
 `features`. It's a separate question whether a description has anything
-to build at all: a recording that's just "hello," dead air, or an
-unrelated remark isn't vague-but-real, it's nothing. The Requirements
-Analyst is now told explicitly to leave `entities`, `actions`, *and*
-`features` all empty only in that case — and `Orchestrator.run` checks
-`Requirements.has_buildable_scope` right after that stage and returns
-immediately if it's false, before Architect/Developer/Code
-Review/Testing ever run. The app shows a plain notice plus the
-transcript instead of a generated app. This costs no extra LLM call: it
-reuses the Requirements stage that already runs on every request.
+to build at all. The Requirements Analyst is told to leave `entities`,
+`actions`, *and* `features` all empty — a hard gate — unless the
+transcript names an actual goal or domain for a piece of software, with
+at least some direction on what that means, even loosely (a short,
+vague-but-real request like "make me something for my tasks" clears the
+bar). Below that bar, none of the following count as scope, however
+long, confident, or coherent they sound:
+
+- Greetings, sign-offs, filler, or mic-check phrases ("hello," "can you
+  hear me," "testing one two three").
+- Silence, background noise, or fragmented/incoherent speech.
+- A story, anecdote, review, or description of something in the real
+  world that isn't a request to build software — even a detailed one
+  with concrete nouns that superficially look like fields (e.g. "I know
+  a restaurant down my lane... it's a Chinese restaurant named Panda
+  Express" describes a restaurant, not a request for a restaurant app).
+- A bare instruction to build *something*, with no goal, domain, or
+  feature actually named ("build me an app," "make something cool") —
+  an instruction alone isn't a specification, even though it's literally
+  about building an app.
+- Meta-commentary about the recording itself, or off-topic small talk.
+
+`Orchestrator.run` checks `Requirements.has_buildable_scope` right after
+that stage and returns immediately if it's false, before Architect/
+Developer/Code Review/Testing ever run. The app shows a plain notice
+plus the transcript instead of a generated app. This costs no extra LLM
+call: it reuses the Requirements stage that already runs on every
+request.
 
 ### Accounts and testing
 

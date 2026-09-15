@@ -104,26 +104,43 @@ data-management mold it doesn't fit:
 - Many apps are a genuine mix of both — describe whatever combination is
   actually true. Never invent a "primary entity" or generic CRUD verbs
   just to fill in a field; leave it empty when it doesn't apply.
-- If the transcript doesn't describe any application, process, feature,
-  or capability to build AT ALL — a greeting, an unrelated remark,
-  silence, test noise like "can you hear me" or "testing one two three"
-  — leave "entities", "actions", AND "features" ALL empty. This is
-  different from a vague-but-real request ("make me something for my
-  tasks" still has a usable feature/entity to extract); only leave every
-  one of those three empty when there is genuinely nothing described to
-  build.
-- A transcript can be detailed, coherent, and full of concrete nouns and
-  still have no scope: a story, an anecdote, a review, or a description
-  of something in the real world is NOT a request to build anything, even
-  when it contains things that superficially look like fields (a name, a
-  category, a rating). Example: "I know a restaurant down my lane, it
-  tastes very good, it's a Chinese restaurant named Panda Express" is
-  someone describing a restaurant they like — not asking for a restaurant
-  app, a review app, or anything else. Do NOT reverse-engineer an entity
-  or feature out of whatever nouns happen to be present; only extract
-  something when the speaker is actually asking for, expressing a wish
-  for, or narrating the design of a piece of software, a tool, or an
-  automatable process.
+- STRICT GATE — leave "entities", "actions", AND "features" ALL empty
+  unless the transcript actually names a real GOAL or DOMAIN for a piece
+  of software (what it's for, or what it should do), with at least some
+  DIRECTION on what that means in practice. The bar is "is there an
+  actual target to build toward," not "is it fully detailed" — a short,
+  vague-but-real request is enough ("make me something for my tasks" has
+  a domain (tasks) and a goal (organize them): extract a reasonable
+  entity/feature for it). Below that bar, none of the following count as
+  scope, however long, confident, or well-formed the transcript sounds,
+  and ALL must leave every one of the three empty:
+  * Greetings, sign-offs, or filler ("hello," "hey there," "okay thanks,
+    bye").
+  * Mic-check / test phrases ("can you hear me," "testing one two
+    three," "is this thing on").
+  * Silence, background noise, or fragmented/incoherent speech with no
+    describable idea in it ("um so like the the thing you know").
+  * A story, anecdote, review, complaint, or a description of something
+    in the real world that isn't a request to build software at all —
+    however detailed or coherent — even when it contains things that
+    superficially look like fields (a name, a category, a rating).
+    Example: "I know a restaurant down my lane, it tastes very good,
+    it's a Chinese restaurant named Panda Express" is someone describing
+    a restaurant they like, not asking for a restaurant app, a review
+    app, or anything else. Do NOT reverse-engineer an entity or feature
+    out of whatever nouns happen to be present.
+  * A bare instruction to build SOMETHING with no goal, domain, or
+    feature actually attached ("build me an app," "make something
+    cool," "create a program for me") — an instruction alone, with
+    nothing named to build toward, is not a specification, even though
+    it's literally about building an app.
+  * Meta-commentary about the recording or process itself ("let me
+    start over," "is this working," "sorry, one sec," "ignore that last
+    part"), or off-topic small talk unrelated to any software idea.
+  Only extract something when the speaker is actually asking for,
+  expressing a wish for, or narrating the design of a piece of software,
+  a tool, or an automatable process — with enough named goal/domain to
+  say what that thing is even loosely for.
 
 Reply with ONLY a JSON object of this exact shape:
 {{

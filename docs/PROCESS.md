@@ -930,6 +930,31 @@ stage does report empty scope, proven with a scripted Mock fixture
 makes the "hello" vs. "make me something for my tasks" distinction is
 something to watch on the live deployment, not something provable here.
 
+**Update:** asked directly to push this to its maximum reasonable
+scope — catch every category of gibberish, and only let a transcript
+through when it actually carries a goal, domain, and direction toward an
+app. Restructured the two prior ad hoc bullets into one explicit
+checklist the model is told is a hard gate: nothing gets extracted unless
+the transcript names a real goal or domain, with at least some direction
+on what that means (still as loose as "make me something for my tasks" —
+the bar is "is there a target," not "is it detailed"). Below that bar,
+six categories all count as no-scope now, not just the two found so far:
+greetings/filler/mic-check phrases, silence or incoherent fragments,
+off-topic real-world content (the restaurant case), a *bare* instruction
+to build with no goal/domain/feature actually named ("build me an app" —
+new: an instruction to build isn't itself a specification, even though
+it's literally about building software), and meta-commentary about the
+recording/process itself. Added a fixture for the bare-instruction case
+specifically, since it's a meaningfully different failure mode from both
+prior ones (it IS about wanting an app, just names nothing to build).
+
+Deliberately did not add a second, independent gate (a heuristic
+pre-filter, a confidence score) alongside the Requirements Analyst's own
+judgment — that would be exactly the kind of hidden, drifting classifier
+this session already removed once (the old forced-"primary-entity"
+prompt). One prompt, one call, one exhaustive checklist stays the single
+source of truth, same as every other contract in this codebase.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the
