@@ -982,6 +982,63 @@ correctly generalizes the *test* to a form nobody has tried — that
 remains an open, live-deployment question, same honest limit as every
 round of this work.
 
+## Round nineteen: a dedicated Scope Gate agent, not a buried prompt bullet
+
+Two rounds spent hardening the no-scope check as a bullet inside
+`RequirementsAnalystAgent`'s prompt — and it still wasn't reliably
+catching gibberish on the live app. The deployer's diagnosis: that
+check was competing for the model's attention inside ~40 lines of
+differently-focused instructions (entity-vs-feature shape, field types,
+filters, screens). Give it its own agent, running before anything else
+— even before Project Manager kickoff — so it's the model's only job in
+that call, and so the rest of the pipeline (kickoff, extraction,
+architecture, build, review, test) genuinely never starts unless it
+passes.
+
+New `ScopeGateAgent.check(transcript) -> ScopeCheck`
+(`pipeline/agents.py`) is now `Orchestrator.run`'s literal first step.
+Its prompt IS the scope test built up over the last two rounds — nothing
+else. `RequirementsAnalystAgent` lost the "STRICT GATE" block entirely:
+each agent now owns exactly one job again, the same principle Round two
+used to narrow the Architect once it started duplicating Requirements'
+field-level work. Two agents independently deciding "is there scope
+here" was itself a latent bug — nothing stopped them from someday
+disagreeing.
+
+`ScopeCheck.reason` is a genuine improvement over what existed before:
+previously every no-scope case showed the identical canned sentence
+regardless of what was actually wrong with the input; now the gate
+returns a short, request-specific explanation shown directly in the
+app's notice (e.g. "that's a personal preference and a question directed
+at a listener, not a software request" instead of one generic line for
+every case). `PipelineResult.brief`/`.requirements` gained default
+factories so the earliest possible return — before a real brief or
+requirements object exists — doesn't need to fabricate one; a placeholder
+`Requirements()` naturally has `has_buildable_scope == False`, so
+`app.py`'s existing render branch needed no changes at all.
+
+Fixing `cli.py` along the way: it turned out `result.architecture.to_dict()`
+and `result.architecture.file_extension` had been crashing unconditionally
+on any no-scope result since the very first no-scope round two rounds
+ago — `architecture` became `Optional` then, but `cli.py` was never
+updated to match `app.py`'s None-guard, and nothing in the test suite
+exercises `cli.py`'s output-writing path directly. Fixed the same way
+`app.py` already handles it: write `brief.json`/`requirements.json`/
+`summary.txt` unconditionally, then skip architecture/QA/testing/
+prototype output when `architecture is None` and print the reason
+plainly instead.
+
+Same standing limitation as every round of this work, worth restating
+because it's the whole premise of this change specifically: a
+scripted-Mock fixture only proves the *mechanism* — that the orchestrator
+genuinely stops before PM kickoff when told to, that `app.py` renders the
+result correctly, that `cli.py` no longer crashes. Whether isolating the
+check into its own single-purpose prompt actually gets a real free-tier
+model to follow it more reliably than the buried version did is the
+actual question this round exists to answer, and it can only be answered
+by testing the live deployment again with the same inputs that slipped
+through before.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

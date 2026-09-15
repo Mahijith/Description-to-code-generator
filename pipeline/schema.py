@@ -146,6 +146,25 @@ class ArchitectureDoc:
 
 
 @dataclass
+class ScopeCheck:
+    """ScopeGateAgent's verdict: does the transcript name an actual goal
+    or domain for a piece of software? `reason` is a short, user-facing
+    explanation shown directly when has_scope is False — request-specific
+    text, not a canned message, so the notice can name what was actually
+    wrong with this particular input."""
+
+    has_scope: bool
+    reason: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScopeCheck":
+        return cls(has_scope=bool(data.get("has_scope", False)), reason=str(data.get("reason", "")))
+
+
+@dataclass
 class QAReport:
     passed: bool
     issues: list[str] = field(default_factory=list)
@@ -174,8 +193,8 @@ class TestReport:
 
 @dataclass
 class PipelineResult:
-    brief: ProjectBrief
-    requirements: Requirements
+    brief: ProjectBrief = field(default_factory=lambda: ProjectBrief(goal="", scope="", out_of_scope=""))
+    requirements: Requirements = field(default_factory=lambda: Requirements(app_name="", description=""))
     architecture: ArchitectureDoc | None = None
     code: str = ""
     qa_reports: list[QAReport] = field(default_factory=list)

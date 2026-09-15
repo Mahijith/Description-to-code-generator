@@ -100,6 +100,7 @@ else:
     C = dict(card="#f6f5fb", border="#e2e5eb", muted="#6b7280", accent="#7c3aed", accent_soft="#7c3aed", danger="#b45309")
 
 STAGE_NODES = [
+    ("scope_gate", "Scope Check"),
     ("pm_kickoff", "Kickoff"),
     ("requirements", "Requirements"),
     ("architect", "Architect"),
@@ -153,7 +154,11 @@ st.markdown(
 
 with st.expander("How it works"):
     st.markdown(
-        "Five agents mirror a small software team, plus a real automated Testing stage:\n\n"
+        "A Scope Gate plus five agents mirror a small software team, plus a real automated "
+        "Testing stage:\n\n"
+        "0. **Scope Gate** — checks the recording actually names a real goal or domain to "
+        "build for, before anything else runs; a greeting, small talk, or a bare \"build me "
+        "an app\" with nothing specified stops right here\n"
         "1. **Project Manager** — writes a brief, and signs off at the end\n"
         "2. **Requirements Analyst** — extracts whatever the app actually needs: entities "
         "and actions for a records-list app, freeform features for anything else (a tool, "

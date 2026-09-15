@@ -242,6 +242,8 @@ class MockLLMProvider(LLMProvider):
         raise LLMError(f"MockLLMProvider has no scripted text answer for prompt: {prompt[:120]!r}")
 
     def complete_json(self, prompt: str):
+        if "STAGE: SCOPE_GATE" in prompt:
+            return {"has_scope": True, "reason": ""}
         if "STAGE: PM_KICKOFF" in prompt:
             return {
                 "goal": "Prototype the application described in the transcript.",

@@ -69,13 +69,20 @@ def main() -> int:
     print("[3/3] Writing output ...")
     (out_dir / "brief.json").write_text(json.dumps(result.brief.to_dict(), indent=2))
     (out_dir / "requirements.json").write_text(json.dumps(result.requirements.to_dict(), indent=2))
+    (out_dir / "summary.txt").write_text(result.summary, encoding="utf-8")
+    (out_dir / "prompt_log.json").write_text(json.dumps(result.prompt_log, indent=2))
+
+    if result.architecture is None:
+        # The Scope Gate stopped the pipeline before anything else ran —
+        # there's no architecture/code/QA/testing to write.
+        print(f"No buildable scope found: {result.summary}")
+        return 0
+
     (out_dir / "architecture.json").write_text(json.dumps(result.architecture.to_dict(), indent=2))
     for i, qa in enumerate(result.qa_reports, start=1):
         (out_dir / f"qa_report_iteration_{i}.json").write_text(json.dumps(qa.to_dict(), indent=2))
     for i, test in enumerate(result.test_reports, start=1):
         (out_dir / f"test_report_iteration_{i}.json").write_text(json.dumps(test.to_dict(), indent=2))
-    (out_dir / "summary.txt").write_text(result.summary, encoding="utf-8")
-    (out_dir / "prompt_log.json").write_text(json.dumps(result.prompt_log, indent=2))
 
     proto_dir = out_dir / "prototype"
     proto_dir.mkdir(exist_ok=True)

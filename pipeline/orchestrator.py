@@ -13,18 +13,27 @@ a slower free model still makes each extra round-trip a real chance to
 hit a rate limit, timeout, or truncation, so it stays a small, explicit
 cap rather than an unbounded retry loop.
 
-If the Requirements stage finds no application/process/feature to build
-at all (Requirements.has_buildable_scope is False — e.g. the transcript
-is just a stray greeting), `run` returns immediately after that stage:
-Architect, Developer, Code Review, and Testing never run, and no
-PipelineResult.architecture/code is produced.
+A dedicated Scope Gate runs before anything else, including PM kickoff
+(see ScopeGateAgent) — if it finds no application/process/feature to
+build at all (e.g. the transcript is just a stray greeting, an off-topic
+remark, or a bare "build me an app" with nothing named), `run` returns
+immediately: PM kickoff, Requirements, Architect, Developer, Code
+Review, and Testing never run at all, and no PipelineResult.architecture/
+code is produced.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
-from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
+from pipeline.agents import (
+    ArchitectAgent,
+    DeveloperAgent,
+    ProjectManagerAgent,
+    QAReviewerAgent,
+    RequirementsAnalystAgent,
+    ScopeGateAgent,
+)
 from pipeline.browser_tester import run_browser_functional_test
 from pipeline.llm import LLMProvider
 from pipeline.schema import ArchitectureDoc, PipelineResult, QAReport, Requirements, TestReport
@@ -37,6 +46,7 @@ class Orchestrator:
     def __init__(self, llm: LLMProvider, max_qa_iterations: int = 3):
         self._max_qa_iterations = max_qa_iterations
         self.prompt_log: list[dict] = []
+        self._scope_gate = ScopeGateAgent(llm, self.prompt_log)
         self._pm = ProjectManagerAgent(llm, self.prompt_log)
         self._requirements_agent = RequirementsAnalystAgent(llm, self.prompt_log)
         self._architect = ArchitectAgent(llm, self.prompt_log)
@@ -51,6 +61,23 @@ class Orchestrator:
             if on_stage:
                 on_stage(stage, status)
 
+        notify("scope_gate", "running")
+        scope_check = self._scope_gate.check(transcript)
+        notify("scope_gate", "done" if scope_check.has_scope else "failed")
+
+        if not scope_check.has_scope:
+            # Nothing to build (a greeting, off-topic content, a bare
+            # instruction with nothing named) — stop before even PM
+            # kickoff runs. No extra LLM call needed for the summary;
+            # the Scope Gate's own reason already explains it.
+            return PipelineResult(
+                summary=scope_check.reason or (
+                    "No application, process, or feature to build was found in "
+                    "this description — there's nothing here to turn into a "
+                    "prototype."
+                ),
+            )
+
         notify("pm_kickoff", "running")
         brief = self._pm.kickoff(transcript)
         notify("pm_kickoff", "done")
@@ -58,21 +85,6 @@ class Orchestrator:
         notify("requirements", "running")
         requirements = self._requirements_agent.extract(transcript, brief)
         notify("requirements", "done")
-
-        if not requirements.has_buildable_scope:
-            # Nothing to build (e.g. a stray "hello") — stop here rather
-            # than spending an Architect/Developer/Code-Review/Testing
-            # pass on a description with no real content. No extra LLM
-            # call needed for the summary either; the situation is fixed.
-            return PipelineResult(
-                brief=brief,
-                requirements=requirements,
-                summary=(
-                    "No application, process, or feature to build was found in "
-                    "this description — there's nothing here to turn into a "
-                    "prototype."
-                ),
-            )
 
         notify("architect", "running")
         architecture = self._architect.design(requirements)

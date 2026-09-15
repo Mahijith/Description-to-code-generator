@@ -1,7 +1,8 @@
-"""The five SDLC personas. Each agent is a thin, stateless wrapper around an
-LLMProvider: it knows how to phrase its own job as a prompt and how to shape
-the reply, and nothing else. All the repetitive parts (building the prompt
-scaffold, calling the model, recording what was asked) live once in Agent.
+"""The Scope Gate plus five SDLC personas. Each agent is a thin, stateless
+wrapper around an LLMProvider: it knows how to phrase its own job as a
+prompt and how to shape the reply, and nothing else. All the repetitive
+parts (building the prompt scaffold, calling the model, recording what was
+asked) live once in Agent.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from abc import ABC
 
 from pipeline import auth_contract, crud_contract
 from pipeline.llm import LLMProvider
-from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements
+from pipeline.schema import ArchitectureDoc, ProjectBrief, QAReport, Requirements, ScopeCheck
 
 
 class Agent(ABC):
@@ -33,6 +34,75 @@ class Agent(ABC):
     def _ask_json(self, stage: str, prompt: str):
         self._log.append({"stage": stage, "prompt": prompt})
         return self._llm.complete_json(prompt)
+
+
+class ScopeGateAgent(Agent):
+    """Runs before anything else, including Project Manager kickoff — its
+    only job is deciding whether the transcript names a real goal or
+    domain for a piece of software at all. Previously this check was one
+    bullet inside RequirementsAnalystAgent's much larger extraction
+    prompt (entity/feature shape, field types, filters); giving it a
+    dedicated, single-purpose prompt with nothing else competing for
+    attention is the whole point of this agent existing."""
+
+    def check(self, transcript: str) -> ScopeCheck:
+        prompt = f"""You are the Scope Gate on a small software team — the
+first checkpoint before any other work starts. This is STAGE: SCOPE_GATE.
+
+Full transcript:
+\"\"\"{transcript}\"\"\"
+
+Your ONLY job: decide whether this transcript actually names a real goal
+or domain for a piece of SOFTWARE to build. The test: after reading it,
+could you say what app/tool/process should be built and roughly what
+it's for? If not, there is no scope — full stop, regardless of how long,
+confident, coherent, or well-formed the transcript sounds, and regardless
+of whether it happens to mention technology at all.
+
+A short, vague-but-real request clears this bar fine ("make me something
+for my tasks" names a domain (tasks) and a goal (organize them) — that's
+real scope). The bar is "is there an actual target to build," not "is it
+fully detailed."
+
+Below that bar, NONE of the following count as scope. This list is
+illustrative, not exhaustive — apply the same test to any other content
+that isn't a software specification, including forms not listed here:
+- Greetings, sign-offs, filler, or mic-check/test phrases ("hello,"
+  "thanks, bye," "can you hear me," "testing one two three").
+- Silence, background noise, or fragmented/incoherent speech.
+- A personal opinion, preference, or feeling stated on its own ("I like
+  France," "my favorite food is pizza") — a preference is not a feature
+  request.
+- A question or remark directed at a listener as if in conversation
+  ("what country do you like?," "what do you think?," "how was your
+  day?") — the speaker is talking TO someone, not specifying software,
+  even when the exchange reads like natural back-and-forth dialogue.
+- A story, anecdote, review, complaint, or a description of something in
+  the real world that isn't a request to build software at all —
+  however detailed or coherent — even with concrete nouns that
+  superficially look like fields (a name, a category, a rating). "I know
+  a restaurant down my lane, it tastes very good, it's a Chinese
+  restaurant named Panda Express" describes a restaurant, it is not a
+  request for a restaurant app.
+- A request for something real-world and non-software (a recipe, a
+  travel itinerary, directions, life advice).
+- A bare instruction to build SOMETHING with no goal, domain, or feature
+  actually named ("build me an app," "make something cool," "create a
+  program for me") — an instruction alone, with nothing named to build
+  toward, is not a specification, even though it's literally about
+  building an app.
+- Meta-commentary about the recording or process itself ("let me start
+  over," "is this working," "sorry, one sec").
+
+Reply with ONLY a JSON object:
+{{"has_scope": boolean, "reason": string}}
+"reason" is one short, plain-language sentence explaining your verdict —
+if false, say specifically what the transcript actually was instead
+(e.g. "This sounds like a personal preference and a question directed at
+a listener, not a request to build software.") so it can be shown
+directly to the person who recorded it."""
+        data = self._ask_json("scope_gate", prompt)
+        return ScopeCheck.from_dict(data)
 
 
 class ProjectManagerAgent(Agent):
@@ -103,54 +173,10 @@ data-management mold it doesn't fit:
   line," "show a call stack that updates as execution advances").
 - Many apps are a genuine mix of both — describe whatever combination is
   actually true. Never invent a "primary entity" or generic CRUD verbs
-  just to fill in a field; leave it empty when it doesn't apply.
-- STRICT GATE — leave "entities", "actions", AND "features" ALL empty
-  unless the transcript passes this test: after reading it, could you say
-  what app/tool/process should be built and roughly what it's for? If
-  not, there is no scope — full stop, regardless of how long, confident,
-  coherent, or well-formed the transcript sounds, and regardless of
-  whether it happens to mention technology at all. A short,
-  vague-but-real request clears this bar fine ("make me something for my
-  tasks" names a domain (tasks) and a goal (organize them) — extract a
-  reasonable entity/feature for it). The bar is "is there an actual
-  target to build," not "is it fully detailed."
-  Below that bar, NONE of the following count as scope. This list is
-  illustrative, not exhaustive — apply the same test to any other content
-  that isn't a software specification, including forms not listed here:
-  * Greetings, sign-offs, or filler ("hello," "hey there," "okay thanks,
-    bye").
-  * Mic-check / test phrases ("can you hear me," "testing one two
-    three," "is this thing on").
-  * Silence, background noise, or fragmented/incoherent speech with no
-    describable idea in it ("um so like the the thing you know").
-  * A personal opinion, preference, or feeling stated on its own ("I
-    like France," "my favorite food is pizza") — a preference is not a
-    feature request.
-  * A question or remark directed at a listener as if in conversation
-    ("what country do you like?," "what do you think?," "how was your
-    day?") — the speaker is talking TO someone, not specifying software,
-    even when the exchange reads like natural back-and-forth dialogue.
-  * A story, anecdote, review, complaint, or a description of something
-    in the real world that isn't a request to build software at all —
-    however detailed or coherent — even when it contains things that
-    superficially look like fields (a name, a category, a rating).
-    Example: "I know a restaurant down my lane, it tastes very good,
-    it's a Chinese restaurant named Panda Express" is someone describing
-    a restaurant they like, not asking for a restaurant app, a review
-    app, or anything else. Do NOT reverse-engineer an entity or feature
-    out of whatever nouns happen to be present.
-  * A bare instruction to build SOMETHING with no goal, domain, or
-    feature actually attached ("build me an app," "make something
-    cool," "create a program for me") — an instruction alone, with
-    nothing named to build toward, is not a specification, even though
-    it's literally about building an app.
-  * Meta-commentary about the recording or process itself ("let me
-    start over," "is this working," "sorry, one sec," "ignore that last
-    part"), or off-topic small talk unrelated to any software idea.
-  Only extract something when the speaker is actually asking for,
-  expressing a wish for, or narrating the design of a piece of software,
-  a tool, or an automatable process — with enough named goal/domain to
-  say what that thing is even loosely for.
+  just to fill in a field; leave it empty when it doesn't apply. (Whether
+  this transcript describes an app at all has already been checked
+  before you saw it — you can assume it does; your job is purely what
+  shape that app takes.)
 
 Reply with ONLY a JSON object of this exact shape:
 {{

@@ -6,13 +6,16 @@
 
 Turn a spoken audio/video description into a working prototype of
 *whatever you actually described* — a small team of AI agents runs the
-whole SDLC (a Project Manager, a Requirements Analyst, an Architect, a
-Developer, and a Code Reviewer) without assuming every app manages a list
-of records. A task tracker gets one thing built; a calculator, a game, or
-a debugging tool gets something else entirely — see "No forced shape"
-below. A real automated Testing stage then actually runs the result in a
-headless browser, at whichever tier applies: registration/login when the
-app has accounts, add/edit/delete/filter when it manages records, or a
+whole SDLC (a Scope Gate, a Project Manager, a Requirements Analyst, an
+Architect, a Developer, and a Code Reviewer) without assuming every app
+manages a list of records. A task tracker gets one thing built; a
+calculator, a game, or a debugging tool gets something else entirely —
+see "No forced shape" below. Before any of that starts, a dedicated Scope
+Gate checks whether the recording names an actual goal or domain to build
+for at all — see "No scope at all is a different case" below. A real
+automated Testing stage then actually runs the result in a headless
+browser, at whichever tier applies: registration/login when the app has
+accounts, add/edit/delete/filter when it manages records, or a
 load/render check for anything else. See "Accounts and testing" below.
 
 <p>
@@ -36,10 +39,12 @@ recording (upload or microphone)
         │                  GROQ_API_KEY set by whoever deploys the app;
         │                  files over ~19.5MB are rejected before upload)
         ▼
+ Scope Gate ──has_scope + reason──▶
+        │
+        ▼ (stops here with a plain notice if nothing to build was found —
+        │  Project Manager kickoff never even runs)
  Project Manager  ──kickoff brief──▶
  Requirements Analyst ──requirements.json (entity+actions, freeform features, or a mix)──▶
-        │
-        ▼ (stops here with a plain notice if nothing to build was found)
  Architect ──architecture.json (has_auth)──▶
  Developer ──source code, whatever shape actually fits──▶
  Code Reviewer ──pass/fail + issues──▶
@@ -97,13 +102,21 @@ was correctly never told to build.
 "No forced shape" is about *not* assuming a shape a description doesn't
 call for — a calculator correctly has no entity but still has real
 `features`. It's a separate question whether a description has anything
-to build at all. Rather than growing a list of specific rejected phrases
-every time a new gibberish form turns up, the Requirements Analyst is
-given one general test: *after reading the transcript, could you say
-what app/tool/process should be built and roughly what it's for?* If
-not, `entities`, `actions`, and `features` all stay empty — a hard gate
-— regardless of how long, confident, or coherent the transcript sounds,
-and regardless of whether it mentions technology at all. A short,
+to build at all. That question is now a dedicated agent's *only* job —
+`ScopeGateAgent` (`pipeline/agents.py`) — running before anything else,
+including Project Manager kickoff. It was originally one bullet inside
+the Requirements Analyst's much larger extraction prompt; that didn't
+reliably catch gibberish on real traffic, competing for attention against
+~40 lines of differently-focused instructions (entity shape, field types,
+filters). Giving it a dedicated prompt, with nothing else in it, is the
+fix — the same "each agent owns one job" principle this project already
+applied once to the Architect (see `docs/PROCESS.md`, Round two).
+
+The gate is one general test rather than a growing list of rejected
+phrases: *after reading the transcript, could you say what app/tool/
+process should be built and roughly what it's for?* If not, there's no
+scope — regardless of how long, confident, or coherent the transcript
+sounds, and regardless of whether it mentions technology at all. A short,
 vague-but-real request like "make me something for my tasks" still
 clears the bar fine (it names a domain and a goal); the bar is "is there
 an actual target," not "is it fully detailed."
@@ -131,12 +144,11 @@ that isn't a software specification, including forms not listed here:
   about building an app.
 - Meta-commentary about the recording itself, or off-topic small talk.
 
-`Orchestrator.run` checks `Requirements.has_buildable_scope` right after
-that stage and returns immediately if it's false, before Architect/
-Developer/Code Review/Testing ever run. The app shows a plain notice
-plus the transcript instead of a generated app. This costs no extra LLM
-call: it reuses the Requirements stage that already runs on every
-request.
+When the gate says no, `Orchestrator.run` returns immediately with its
+`reason` as the summary — Project Manager kickoff, Requirements,
+Architect, Developer, Code Review, and Testing never run at all. The app
+shows a plain, request-specific notice (not one canned sentence for every
+case) plus the transcript instead of a generated app.
 
 ### Accounts and testing
 
@@ -237,7 +249,8 @@ page width, which reliably stays above that threshold at any normal
 window size; `DeveloperAgent`'s prompt also now asks explicitly for any
 responsive breakpoint to actually be checked, not just added.
 
-Every one of the five agents is a thin wrapper around one `LLMProvider`
+Every one of the six agents (Scope Gate plus the five SDLC personas) is a
+thin wrapper around one `LLMProvider`
 interface (`pipeline/llm.py`) — they never know which model is actually
 answering them. Both `app.py` and `cli.py` default to **`OpenRouterProvider`**
 (default model: `inclusionai/ling-3.0-flash-vl:free` — see `docs/PROCESS.md`
@@ -272,7 +285,7 @@ Groq's API, since that's the point it stops accepting files in practice.
 
 ```bash
 pip install -r requirements.txt
-export OPENROUTER_API_KEY=sk-...  # free key from openrouter.ai/keys, powers the 5-agent pipeline
+export OPENROUTER_API_KEY=sk-...  # free key from openrouter.ai/keys, powers the 6-agent pipeline
 export GROQ_API_KEY=gsk_...       # free key from console.groq.com/keys, needed only for audio/video transcription
 streamlit run app.py
 ```
@@ -424,8 +437,8 @@ pipeline/
   secrets.py       Secrets — encapsulates the API key
   llm.py           LLMProvider (ABC), OpenRouterProvider (default), AIHubMixProvider, MockLLMProvider
   transcribe.py    Transcriber (ABC), GroqWhisperTranscriber, PassthroughTranscriber
-  schema.py        ProjectBrief, Requirements (entities/actions or features), ArchitectureDoc, QAReport, TestReport, PipelineResult
-  agents.py        Agent (ABC) + the 5 SDLC personas
+  schema.py        ProjectBrief, Requirements (entities/actions or features), ArchitectureDoc, ScopeCheck, QAReport, TestReport, PipelineResult
+  agents.py        Agent (ABC), ScopeGateAgent (runs first, before PM kickoff) + the 5 SDLC personas
   auth_contract.py the register/login element-id contract shared by DeveloperAgent's prompt and browser_tester.py
   crud_contract.py the per-app add/edit/delete/filter element-id contract, derived from real Requirements fields
   browser_tester.py real headless-browser test: auth, CRUD, or a generic smoke test — dev/test dep, degrades gracefully

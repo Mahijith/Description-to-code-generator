@@ -4,7 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pipeline.agents import ArchitectAgent, DeveloperAgent, ProjectManagerAgent, QAReviewerAgent, RequirementsAnalystAgent
+from pipeline.agents import (
+    ArchitectAgent,
+    DeveloperAgent,
+    ProjectManagerAgent,
+    QAReviewerAgent,
+    RequirementsAnalystAgent,
+    ScopeGateAgent,
+)
 from pipeline.auth_contract import (
     AUTH_STATUS_ID,
     LOGIN_PASSWORD_ID,
@@ -389,7 +396,7 @@ def test_orchestrator_runs_full_loop_and_ends_passed():
     assert any(s.startswith("developer (pass 2)") for s, _ in stages)
     assert len(result.prompt_log) == len(orchestrator.prompt_log)
     # every prompt actually sent is recorded, in call order
-    assert [p["stage"] for p in result.prompt_log][:3] == ["pm_kickoff", "requirements", "architect"]
+    assert [p["stage"] for p in result.prompt_log][:4] == ["scope_gate", "pm_kickoff", "requirements", "architect"]
 
 
 def test_groq_transcriber_returns_text_on_success(tmp_path):
@@ -655,12 +662,16 @@ def test_requirements_has_buildable_scope():
     assert with_feature.has_buildable_scope is True
 
 
-def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
+def test_scope_gate_prompt_states_a_general_test_not_just_examples():
     log: list[dict] = []
-    RequirementsAnalystAgent(MockLLMProvider(), log).extract(SAMPLE_TRANSCRIPT, _dummy_brief())
+    ScopeGateAgent(MockLLMProvider(), log).check(SAMPLE_TRANSCRIPT)
     prompt = log[-1]["prompt"]
     normalized = " ".join(prompt.lower().split())
-    assert "leave \"entities\", \"actions\", and \"features\" all empty" in normalized
+    # The gate must be framed as a general, reusable test — not just a
+    # growing list of specific phrases — so it also catches gibberish
+    # forms nobody has explicitly written into the prompt yet.
+    assert "could you say what app/tool/process should be built" in normalized
+    assert "not exhaustive" in normalized
     assert "vague-but-real request" in normalized
     # Coherent, detailed, unrelated content (a story/anecdote/review) must
     # be called out as its own no-scope case, distinct from noise like a
@@ -668,16 +679,10 @@ def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
     # whatever nouns happen to be present (e.g. treating an offhand
     # restaurant recommendation as a request for a restaurant/review app).
     assert "panda express" in normalized
-    assert "reverse-engineer an entity" in normalized
     # A bare "build me an app" with no named goal/domain must also be
     # rejected — an instruction to build is not itself a specification.
     assert "build me an app" in normalized
     assert "is not a specification" in normalized
-    # The gate must be framed as a general, reusable test — not just a
-    # growing list of specific phrases — so it also catches gibberish
-    # forms nobody has explicitly written into the prompt yet.
-    assert "could you say what app/tool/process should be built" in normalized
-    assert "not exhaustive" in normalized
     # A personal opinion/preference, and a question or remark directed at
     # a listener as if in conversation, are distinct no-scope categories
     # from noise and off-topic narration (e.g. "I like France. What
@@ -688,126 +693,97 @@ def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
     assert "talking to someone, not specifying software" in normalized
 
 
-def test_orchestrator_skips_pipeline_when_no_buildable_scope():
+def test_requirements_analyst_no_longer_re_derives_the_scope_gate():
+    """Now that ScopeGateAgent owns this decision exclusively, the
+    Requirements prompt should be pure extraction again — each agent
+    owns one job (the same principle Round two of docs/PROCESS.md used
+    to narrow the Architect after it duplicated Requirements' work)."""
+    log: list[dict] = []
+    RequirementsAnalystAgent(MockLLMProvider(), log).extract(SAMPLE_TRANSCRIPT, _dummy_brief())
+    prompt = log[-1]["prompt"]
+    normalized = " ".join(prompt.lower().split())
+    assert "strict gate" not in normalized
+    assert "panda express" not in normalized
+    assert "already been checked before you saw it" in normalized
+
+
+def _no_scope_llm(reason: str):
     class NoScopeLLM(MockLLMProvider):
         def complete_json(self, prompt):
-            if "STAGE: REQUIREMENTS" in prompt:
-                return {
-                    "app_name": "Untitled",
-                    "description": "Just a greeting, nothing to build.",
-                    "entities": [],
-                    "actions": [],
-                    "filters": [],
-                    "features": [],
-                    "screens": [],
-                }
+            if "STAGE: SCOPE_GATE" in prompt:
+                return {"has_scope": False, "reason": reason}
             return super().complete_json(prompt)
 
-    orchestrator = Orchestrator(NoScopeLLM())
-    stages: list[str] = []
-    result = orchestrator.run("hello", on_stage=lambda s, status: stages.append(s))
+    return NoScopeLLM()
 
+
+def _assert_pipeline_never_started(result, stages: list[str]) -> None:
     assert result.requirements.has_buildable_scope is False
     assert result.architecture is None
     assert result.code == ""
     assert result.summary
-    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+    # Nothing beyond the Scope Gate itself ran — not even PM kickoff.
+    assert not any(
+        s.startswith(("pm_kickoff", "requirements", "architect", "developer", "qa", "testing", "pm_summary"))
+        for s in stages
+    )
+
+
+def test_orchestrator_skips_pipeline_when_no_buildable_scope():
+    orchestrator = Orchestrator(_no_scope_llm("Just a greeting, nothing to build."))
+    stages: list[str] = []
+    result = orchestrator.run("hello", on_stage=lambda s, status: stages.append(s))
+    _assert_pipeline_never_started(result, stages)
+    assert result.summary == "Just a greeting, nothing to build."
 
 
 def test_orchestrator_skips_pipeline_for_coherent_but_unrelated_content():
     """Distinct from the "hello" case: this transcript is a real, detailed
-    sentence — it just isn't a request to build anything. Proves the
-    short-circuit works the same way once the Requirements stage reports
-    empty scope, regardless of why (noise vs. off-topic content)."""
-
+    sentence — it just isn't a request to build anything."""
     restaurant_review = (
         "I know a restaurant down my lane. It tastes very good. "
         "It's a Chinese restaurant named Panda Express."
     )
-
-    class NoScopeLLM(MockLLMProvider):
-        def complete_json(self, prompt):
-            if "STAGE: REQUIREMENTS" in prompt:
-                return {
-                    "app_name": "Untitled",
-                    "description": "An anecdote about a restaurant, not a request to build anything.",
-                    "entities": [],
-                    "actions": [],
-                    "filters": [],
-                    "features": [],
-                    "screens": [],
-                }
-            return super().complete_json(prompt)
-
-    orchestrator = Orchestrator(NoScopeLLM())
+    orchestrator = Orchestrator(_no_scope_llm("That's a restaurant recommendation, not a software request."))
     stages: list[str] = []
     result = orchestrator.run(restaurant_review, on_stage=lambda s, status: stages.append(s))
-
-    assert result.requirements.has_buildable_scope is False
-    assert result.architecture is None
-    assert result.code == ""
-    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+    _assert_pipeline_never_started(result, stages)
 
 
 def test_orchestrator_skips_pipeline_for_bare_build_instruction_with_no_target():
     """"Build me an app" names no goal/domain/feature — an instruction to
     build is not itself a specification, even though it's literally about
-    building software. Distinct from both the noise case and the
-    unrelated-content case: this transcript IS about wanting an app, just
-    with nothing to build it toward."""
-
-    class NoScopeLLM(MockLLMProvider):
-        def complete_json(self, prompt):
-            if "STAGE: REQUIREMENTS" in prompt:
-                return {
-                    "app_name": "Untitled",
-                    "description": "A bare request to build an app with no named goal or domain.",
-                    "entities": [],
-                    "actions": [],
-                    "filters": [],
-                    "features": [],
-                    "screens": [],
-                }
-            return super().complete_json(prompt)
-
-    orchestrator = Orchestrator(NoScopeLLM())
+    building software."""
+    orchestrator = Orchestrator(_no_scope_llm("No goal or domain was named to build toward."))
     stages: list[str] = []
     result = orchestrator.run("Build me an app.", on_stage=lambda s, status: stages.append(s))
-
-    assert result.requirements.has_buildable_scope is False
-    assert result.architecture is None
-    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+    _assert_pipeline_never_started(result, stages)
 
 
 def test_orchestrator_skips_pipeline_for_conversational_exchange():
-    """A fourth distinct no-scope shape, found by the deployer after the
-    prior three: a stated personal preference plus a question directed at
-    a listener. Not noise, not off-topic narration, not a bare build
+    """A stated personal preference plus a question directed at a
+    listener. Not noise, not off-topic narration, not a bare build
     instruction — someone having a conversation with the recording."""
-
     conversational_exchange = "I told it I like France and asked what country do you like."
-
-    class NoScopeLLM(MockLLMProvider):
-        def complete_json(self, prompt):
-            if "STAGE: REQUIREMENTS" in prompt:
-                return {
-                    "app_name": "Untitled",
-                    "description": "A personal preference and a question directed at a listener, not a software request.",
-                    "entities": [],
-                    "actions": [],
-                    "filters": [],
-                    "features": [],
-                    "screens": [],
-                }
-            return super().complete_json(prompt)
-
-    orchestrator = Orchestrator(NoScopeLLM())
+    orchestrator = Orchestrator(
+        _no_scope_llm("That's a personal preference and a question directed at a listener, not a software request.")
+    )
     stages: list[str] = []
     result = orchestrator.run(conversational_exchange, on_stage=lambda s, status: stages.append(s))
+    _assert_pipeline_never_started(result, stages)
 
-    assert result.requirements.has_buildable_scope is False
-    assert result.architecture is None
-    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+
+def test_orchestrator_runs_normally_when_scope_gate_passes():
+    """A passing Scope Gate must not change anything else about a normal
+    run — the rest of the (Mock-scripted) pipeline behaves exactly as it
+    does without the gate."""
+    orchestrator = Orchestrator(MockLLMProvider(), max_qa_iterations=2)
+    stages: list[str] = []
+    result = orchestrator.run(SAMPLE_TRANSCRIPT, on_stage=lambda s, status: stages.append(s))
+    assert stages[0] == "scope_gate"
+    assert result.requirements.has_buildable_scope is True
+    assert result.architecture is not None
+    assert result.code.strip().lower().startswith("<!doctype html>")
 
 
 @needs_real_browser
