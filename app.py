@@ -142,7 +142,7 @@ col_logo, col_title = st.columns([1, 12], vertical_alignment="center")
 with col_logo:
     st.image("assets/logo.png", width=40)
 with col_title:
-    st.title("ATA System")
+    st.title("AV2A(Audio/Video2Application)")
     st.caption("A 5-agent SDLC pipeline plus a real browser-testing stage turns an audio or video description into a working prototype.")
 st.markdown(
     "<div class='badge-row'>"
