@@ -97,17 +97,29 @@ was correctly never told to build.
 "No forced shape" is about *not* assuming a shape a description doesn't
 call for — a calculator correctly has no entity but still has real
 `features`. It's a separate question whether a description has anything
-to build at all. The Requirements Analyst is told to leave `entities`,
-`actions`, *and* `features` all empty — a hard gate — unless the
-transcript names an actual goal or domain for a piece of software, with
-at least some direction on what that means, even loosely (a short,
-vague-but-real request like "make me something for my tasks" clears the
-bar). Below that bar, none of the following count as scope, however
-long, confident, or coherent they sound:
+to build at all. Rather than growing a list of specific rejected phrases
+every time a new gibberish form turns up, the Requirements Analyst is
+given one general test: *after reading the transcript, could you say
+what app/tool/process should be built and roughly what it's for?* If
+not, `entities`, `actions`, and `features` all stay empty — a hard gate
+— regardless of how long, confident, or coherent the transcript sounds,
+and regardless of whether it mentions technology at all. A short,
+vague-but-real request like "make me something for my tasks" still
+clears the bar fine (it names a domain and a goal); the bar is "is there
+an actual target," not "is it fully detailed."
+
+Below that bar, none of the following count as scope — this list is
+explicitly non-exhaustive; the same test applies to any other content
+that isn't a software specification, including forms not listed here:
 
 - Greetings, sign-offs, filler, or mic-check phrases ("hello," "can you
   hear me," "testing one two three").
 - Silence, background noise, or fragmented/incoherent speech.
+- A personal opinion or preference stated on its own ("I like France")
+  — a preference is not a feature request.
+- A question or remark directed at a listener as if in conversation
+  ("what country do you like?") — talking *to* someone, not specifying
+  software, even when it reads like natural dialogue.
 - A story, anecdote, review, or description of something in the real
   world that isn't a request to build software — even a detailed one
   with concrete nouns that superficially look like fields (e.g. "I know

@@ -955,6 +955,33 @@ this session already removed once (the old forced-"primary-entity"
 prompt). One prompt, one call, one exhaustive checklist stays the single
 source of truth, same as every other contract in this codebase.
 
+**Update:** the "exhaustive checklist" framing was itself the wrong
+shape. A fourth case slipped through immediately: "I told it I like
+France and asked what country do you like" — a stated preference plus a
+question posed to the recording as if it were a listener, not any of the
+six categories already listed, and executed anyway. Direct feedback: stop
+patching one reported phrase at a time; a growing list of specific
+examples will always be one step behind whatever gets tried next.
+
+Restructured around one general TEST stated *before* the examples,
+rather than the examples themselves being the rule: "after reading the
+transcript, could you say what app/tool/process should be built and
+roughly what it's for? If not, there is no scope — regardless of length,
+confidence, coherence, or whether it mentions technology." The prior
+categories (noise, off-topic narration, bare instruction, meta-commentary)
+now read as illustrations of that test rather than the test itself, with
+two more added for the France case specifically — a stated personal
+opinion/preference, and a question or remark directed at a listener as if
+in conversation — and one line making the non-exhaustiveness explicit:
+apply the same test to any other content that isn't a software
+specification, including forms nobody has written into the prompt yet.
+This is the actual point of a principle over an enumeration: a fixture
+can only prove the mechanism handles the exact case it encodes (proven
+here for the France example specifically), never that a real model
+correctly generalizes the *test* to a form nobody has tried — that
+remains an open, live-deployment question, same honest limit as every
+round of this work.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

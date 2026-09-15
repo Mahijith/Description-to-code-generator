@@ -673,6 +673,19 @@ def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
     # rejected — an instruction to build is not itself a specification.
     assert "build me an app" in normalized
     assert "is not a specification" in normalized
+    # The gate must be framed as a general, reusable test — not just a
+    # growing list of specific phrases — so it also catches gibberish
+    # forms nobody has explicitly written into the prompt yet.
+    assert "could you say what app/tool/process should be built" in normalized
+    assert "not exhaustive" in normalized
+    # A personal opinion/preference, and a question or remark directed at
+    # a listener as if in conversation, are distinct no-scope categories
+    # from noise and off-topic narration (e.g. "I like France. What
+    # country do you like?" is a preference plus a question TO someone,
+    # not a software specification).
+    assert "i like france" in normalized
+    assert "a preference is not a feature request" in normalized
+    assert "talking to someone, not specifying software" in normalized
 
 
 def test_orchestrator_skips_pipeline_when_no_buildable_scope():
@@ -760,6 +773,37 @@ def test_orchestrator_skips_pipeline_for_bare_build_instruction_with_no_target()
     orchestrator = Orchestrator(NoScopeLLM())
     stages: list[str] = []
     result = orchestrator.run("Build me an app.", on_stage=lambda s, status: stages.append(s))
+
+    assert result.requirements.has_buildable_scope is False
+    assert result.architecture is None
+    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+
+
+def test_orchestrator_skips_pipeline_for_conversational_exchange():
+    """A fourth distinct no-scope shape, found by the deployer after the
+    prior three: a stated personal preference plus a question directed at
+    a listener. Not noise, not off-topic narration, not a bare build
+    instruction — someone having a conversation with the recording."""
+
+    conversational_exchange = "I told it I like France and asked what country do you like."
+
+    class NoScopeLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: REQUIREMENTS" in prompt:
+                return {
+                    "app_name": "Untitled",
+                    "description": "A personal preference and a question directed at a listener, not a software request.",
+                    "entities": [],
+                    "actions": [],
+                    "filters": [],
+                    "features": [],
+                    "screens": [],
+                }
+            return super().complete_json(prompt)
+
+    orchestrator = Orchestrator(NoScopeLLM())
+    stages: list[str] = []
+    result = orchestrator.run(conversational_exchange, on_stage=lambda s, status: stages.append(s))
 
     assert result.requirements.has_buildable_scope is False
     assert result.architecture is None

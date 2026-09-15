@@ -105,21 +105,31 @@ data-management mold it doesn't fit:
   actually true. Never invent a "primary entity" or generic CRUD verbs
   just to fill in a field; leave it empty when it doesn't apply.
 - STRICT GATE — leave "entities", "actions", AND "features" ALL empty
-  unless the transcript actually names a real GOAL or DOMAIN for a piece
-  of software (what it's for, or what it should do), with at least some
-  DIRECTION on what that means in practice. The bar is "is there an
-  actual target to build toward," not "is it fully detailed" — a short,
-  vague-but-real request is enough ("make me something for my tasks" has
-  a domain (tasks) and a goal (organize them): extract a reasonable
-  entity/feature for it). Below that bar, none of the following count as
-  scope, however long, confident, or well-formed the transcript sounds,
-  and ALL must leave every one of the three empty:
+  unless the transcript passes this test: after reading it, could you say
+  what app/tool/process should be built and roughly what it's for? If
+  not, there is no scope — full stop, regardless of how long, confident,
+  coherent, or well-formed the transcript sounds, and regardless of
+  whether it happens to mention technology at all. A short,
+  vague-but-real request clears this bar fine ("make me something for my
+  tasks" names a domain (tasks) and a goal (organize them) — extract a
+  reasonable entity/feature for it). The bar is "is there an actual
+  target to build," not "is it fully detailed."
+  Below that bar, NONE of the following count as scope. This list is
+  illustrative, not exhaustive — apply the same test to any other content
+  that isn't a software specification, including forms not listed here:
   * Greetings, sign-offs, or filler ("hello," "hey there," "okay thanks,
     bye").
   * Mic-check / test phrases ("can you hear me," "testing one two
     three," "is this thing on").
   * Silence, background noise, or fragmented/incoherent speech with no
     describable idea in it ("um so like the the thing you know").
+  * A personal opinion, preference, or feeling stated on its own ("I
+    like France," "my favorite food is pizza") — a preference is not a
+    feature request.
+  * A question or remark directed at a listener as if in conversation
+    ("what country do you like?," "what do you think?," "how was your
+    day?") — the speaker is talking TO someone, not specifying software,
+    even when the exchange reads like natural back-and-forth dialogue.
   * A story, anecdote, review, complaint, or a description of something
     in the real world that isn't a request to build software at all —
     however detailed or coherent — even when it contains things that
