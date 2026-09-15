@@ -875,6 +875,43 @@ it requires the model to propose two near-duplicate field names for the
 same entity, which is unlikely, and the failure mode if it did happen is
 a wrong-field read in a test, not a crash.
 
+## Round eighteen: telling "nothing to build" apart from "vague but real"
+
+Testing the live app directly with an audio recording that just said
+"hello" showed the pipeline running to completion anyway and producing
+some disconnected app despite there being nothing in the description to
+build from. This is the deliberate opposite of Round fifteen's "no forced
+shape" fix, and worth being precise about why the two aren't in tension:
+that round was about *not* assuming a shape a real description doesn't
+call for (a calculator correctly has no entity, but a real `features`
+list). This is about the transcript containing no description at all —
+"hello" isn't a vague app request, it's not a request.
+
+The fix reuses the Requirements Analyst's existing extraction call rather
+than adding a new LLM call or a word-count heuristic — it already reasons
+over the full transcript and already has permission to leave
+`entities`/`actions`/`features` empty per-field when they don't apply.
+The only gap was that its prompt never distinguished "vague but real"
+(still extract something) from "nothing described to build at all" (leave
+every one of those three empty). One added instruction closes that gap at
+zero extra API cost, since it's the same call already running on every
+request. `Requirements.has_buildable_scope` — true when any of
+`entities`/`actions`/`features` is non-empty — is the one derived signal
+`Orchestrator.run` and `app.py` both check, matching the same
+"one real signal, not a second flag that can drift" pattern used for
+`primary_entity`. When it's false, `Orchestrator.run` returns right after
+the Requirements stage: Architect, Developer, Code Review, and Testing
+never run, and the app shows a plain notice plus the transcript instead
+of a generated app.
+
+As with every model-facing change this session, this can't be verified
+end to end against a real OpenRouter model from this sandbox — only that
+the machinery correctly short-circuits and renders when the Requirements
+stage does report empty scope, proven with a scripted Mock fixture
+(`tests/test_pipeline.py`). Whether a given free-tier model reliably
+makes the "hello" vs. "make me something for my tasks" distinction is
+something to watch on the live deployment, not something provable here.
+
 ## What I'd do next with more time
 
 - Let the Architect propose more than one screen/entity and have the

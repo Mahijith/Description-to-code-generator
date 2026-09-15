@@ -641,6 +641,55 @@ def test_orchestrator_defaults_to_three_iterations_now():
     assert result.iterations == 3
 
 
+def test_requirements_has_buildable_scope():
+    empty = Requirements(app_name="X", description="d")
+    assert empty.has_buildable_scope is False
+
+    with_entity = Requirements(app_name="X", description="d", entities=[Entity(name="Task")])
+    assert with_entity.has_buildable_scope is True
+
+    with_action = Requirements(app_name="X", description="d", actions=["add"])
+    assert with_action.has_buildable_scope is True
+
+    with_feature = Requirements(app_name="X", description="d", features=["step through code"])
+    assert with_feature.has_buildable_scope is True
+
+
+def test_requirements_analyst_prompt_distinguishes_no_scope_from_vague():
+    log: list[dict] = []
+    RequirementsAnalystAgent(MockLLMProvider(), log).extract(SAMPLE_TRANSCRIPT, _dummy_brief())
+    prompt = log[-1]["prompt"]
+    normalized = " ".join(prompt.lower().split())
+    assert "leave \"entities\", \"actions\", and \"features\" all empty" in normalized
+    assert "vague-but-real request" in normalized
+
+
+def test_orchestrator_skips_pipeline_when_no_buildable_scope():
+    class NoScopeLLM(MockLLMProvider):
+        def complete_json(self, prompt):
+            if "STAGE: REQUIREMENTS" in prompt:
+                return {
+                    "app_name": "Untitled",
+                    "description": "Just a greeting, nothing to build.",
+                    "entities": [],
+                    "actions": [],
+                    "filters": [],
+                    "features": [],
+                    "screens": [],
+                }
+            return super().complete_json(prompt)
+
+    orchestrator = Orchestrator(NoScopeLLM())
+    stages: list[str] = []
+    result = orchestrator.run("hello", on_stage=lambda s, status: stages.append(s))
+
+    assert result.requirements.has_buildable_scope is False
+    assert result.architecture is None
+    assert result.code == ""
+    assert result.summary
+    assert not any(s.startswith(("architect", "developer", "qa", "testing", "pm_summary")) for s in stages)
+
+
 @needs_real_browser
 def test_orchestrator_runs_crud_test_even_without_auth():
     orchestrator = Orchestrator(MockLLMProvider())
@@ -765,6 +814,12 @@ def test_isolate_local_storage_is_not_confused_by_a_fake_body_tag_in_a_script_st
     result = isolate_local_storage(html, "abc")
     assert result.startswith("<script>")
     assert 'var tpl = "<body class=nope>fake</body>";' in result
+
+
+def _dummy_brief():
+    from pipeline.schema import ProjectBrief
+
+    return ProjectBrief(goal="g", scope="s", out_of_scope="o", success_criteria=[])
 
 
 def _dummy_requirements():

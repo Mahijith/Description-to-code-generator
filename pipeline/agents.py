@@ -104,6 +104,14 @@ data-management mold it doesn't fit:
 - Many apps are a genuine mix of both — describe whatever combination is
   actually true. Never invent a "primary entity" or generic CRUD verbs
   just to fill in a field; leave it empty when it doesn't apply.
+- If the transcript doesn't describe any application, process, feature,
+  or capability to build AT ALL — a greeting, an unrelated remark,
+  silence, test noise like "can you hear me" or "testing one two three"
+  — leave "entities", "actions", AND "features" ALL empty. This is
+  different from a vague-but-real request ("make me something for my
+  tasks" still has a usable feature/entity to extract); only leave every
+  one of those three empty when there is genuinely nothing described to
+  build.
 
 Reply with ONLY a JSON object of this exact shape:
 {{

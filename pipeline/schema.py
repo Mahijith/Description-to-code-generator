@@ -109,6 +109,15 @@ class Requirements:
     def primary_entity(self) -> Entity | None:
         return self.entities[0] if self.entities else None
 
+    @property
+    def has_buildable_scope(self) -> bool:
+        """False when the Requirements Analyst found nothing at all to
+        build — no entity, no action, no freeform feature. Distinct from a
+        vague-but-real request (which still has at least one of these);
+        see RequirementsAnalystAgent.extract's prompt for the distinction
+        the model is asked to make."""
+        return bool(self.entities or self.actions or self.features)
+
 
 @dataclass
 class ArchitectureDoc:
@@ -167,19 +176,19 @@ class TestReport:
 class PipelineResult:
     brief: ProjectBrief
     requirements: Requirements
-    architecture: ArchitectureDoc
-    code: str
-    qa_reports: list[QAReport]
-    test_reports: list[TestReport]
-    iterations: int
-    summary: str
-    prompt_log: list[dict]
+    architecture: ArchitectureDoc | None = None
+    code: str = ""
+    qa_reports: list[QAReport] = field(default_factory=list)
+    test_reports: list[TestReport] = field(default_factory=list)
+    iterations: int = 0
+    summary: str = ""
+    prompt_log: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "brief": self.brief.to_dict(),
             "requirements": self.requirements.to_dict(),
-            "architecture": self.architecture.to_dict(),
+            "architecture": self.architecture.to_dict() if self.architecture else None,
             "code": self.code,
             "qa_reports": [q.to_dict() for q in self.qa_reports],
             "test_reports": [t.to_dict() for t in self.test_reports],

@@ -12,6 +12,12 @@ iteration cap is sized around the LLM calls only: a longer description or
 a slower free model still makes each extra round-trip a real chance to
 hit a rate limit, timeout, or truncation, so it stays a small, explicit
 cap rather than an unbounded retry loop.
+
+If the Requirements stage finds no application/process/feature to build
+at all (Requirements.has_buildable_scope is False — e.g. the transcript
+is just a stray greeting), `run` returns immediately after that stage:
+Architect, Developer, Code Review, and Testing never run, and no
+PipelineResult.architecture/code is produced.
 """
 
 from __future__ import annotations
@@ -52,6 +58,21 @@ class Orchestrator:
         notify("requirements", "running")
         requirements = self._requirements_agent.extract(transcript, brief)
         notify("requirements", "done")
+
+        if not requirements.has_buildable_scope:
+            # Nothing to build (e.g. a stray "hello") — stop here rather
+            # than spending an Architect/Developer/Code-Review/Testing
+            # pass on a description with no real content. No extra LLM
+            # call needed for the summary either; the situation is fixed.
+            return PipelineResult(
+                brief=brief,
+                requirements=requirements,
+                summary=(
+                    "No application, process, or feature to build was found in "
+                    "this description — there's nothing here to turn into a "
+                    "prototype."
+                ),
+            )
 
         notify("architect", "running")
         architecture = self._architect.design(requirements)

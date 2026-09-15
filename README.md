@@ -38,6 +38,8 @@ recording (upload or microphone)
         ▼
  Project Manager  ──kickoff brief──▶
  Requirements Analyst ──requirements.json (entity+actions, freeform features, or a mix)──▶
+        │
+        ▼ (stops here with a plain notice if nothing to build was found)
  Architect ──architecture.json (has_auth)──▶
  Developer ──source code, whatever shape actually fits──▶
  Code Reviewer ──pass/fail + issues──▶
@@ -89,6 +91,21 @@ diagnosis, including a second bug this fix uncovered: Testing's browser
 driver used to call the CRUD check unconditionally too, so an app with
 correctly *no* entity was failing Testing outright for lacking a form it
 was correctly never told to build.
+
+### No scope at all is a different case, and stops the pipeline early
+
+"No forced shape" is about *not* assuming a shape a description doesn't
+call for — a calculator correctly has no entity but still has real
+`features`. It's a separate question whether a description has anything
+to build at all: a recording that's just "hello," dead air, or an
+unrelated remark isn't vague-but-real, it's nothing. The Requirements
+Analyst is now told explicitly to leave `entities`, `actions`, *and*
+`features` all empty only in that case — and `Orchestrator.run` checks
+`Requirements.has_buildable_scope` right after that stage and returns
+immediately if it's false, before Architect/Developer/Code
+Review/Testing ever run. The app shows a plain notice plus the
+transcript instead of a generated app. This costs no extra LLM call: it
+reuses the Requirements stage that already runs on every request.
 
 ### Accounts and testing
 
